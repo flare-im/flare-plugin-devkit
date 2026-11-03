@@ -7,3 +7,5 @@ Start with [Build your own plugin](flare-plugin-host/docs/build-your-own-plugin.
 Clone [flare-protocol](https://github.com/flare-im/flare-protocol), [flare-protocol-grpc](https://github.com/flare-im/flare-protocol-grpc), and [flare-server-runtime](https://github.com/flare-im/flare-server-runtime) alongside this repository. Run `cargo test --manifest-path flare-plugin-host/Cargo.toml` from the repository root. The protobuf compiler must be on PATH.
 
 The template contains placeholder artifact metadata. Replace it with the digest and signature produced by your publishing pipeline.
+
+Use the public sibling source checkouts for development and CI. The manual registry packaging check requires the matching `flare-plugin-protocol` crate to be available on crates.io.

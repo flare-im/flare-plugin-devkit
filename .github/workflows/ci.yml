@@ -5,6 +5,11 @@ on:
     branches: [main, dev]
   pull_request:
   workflow_dispatch:
+    inputs:
+      verify_registry:
+        description: Verify crates.io packaging after the protocol crate is available
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,8 +24,15 @@ defaults:
 
 jobs:
   check:
-    name: fmt / clippy / test
+    name: Check ${{ matrix.crate }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [flare-plugin-host, flare-plugin-kit, flare-plugin-wasm]
+    defaults:
+      run:
+        working-directory: ${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,17 +67,18 @@ jobs:
       # --all-targets 是必须的：examples/tests 不在默认目标里，
       # 本仓曾因此让一个加了字段后没跟上的 example 长期编不过而无人发现。
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: test
-        run: cargo test
+        run: cargo test --locked --all-targets
 
       # 文档里的代码片段会被 rustdoc 当 doctest 编译。
       # 这是文档腐坏唯一的自动信号：API 改了名而文档没跟上，这里会红。
       - name: doctest
-        run: cargo test --doc
+        run: cargo test --locked --doc
 
   publishable:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_registry
     name: 外部能否构建
     runs-on: ubuntu-latest
     steps:
@@ -178,7 +191,7 @@ jobs:
         run: |
           declared=$(grep -m1 '^license' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           [ -n "$declared" ] || { echo "✗ Cargo.toml 没有 license 字段"; exit 1; }
-          key=$(echo "${declared%%-*}" | tr 'A-Z' 'a-z')
+          key=$(echo "${declared%%-*}" | tr '[:upper:]' '[:lower:]')
           fail=0
           for f in README.md README.zh-CN.md; do
             [ -f "$f" ] || continue
@@ -188,7 +201,7 @@ jobs:
             echo "$section" | grep -qi "$key" \
               || { echo "✗ $f 许可证小节没提 $declared"; fail=1; }
             for other in MIT GPL BSD MPL ISC; do
-              o=$(echo "$other" | tr 'A-Z' 'a-z'); [ "$o" = "$key" ] && continue
+              o=$(echo "$other" | tr '[:upper:]' '[:lower:]'); [ "$o" = "$key" ] && continue
               echo "$section" | grep -qiE "\b$other\b" \
                 && { echo "✗ $f 许可证小节写着 $other，而 Cargo.toml 声明 $declared"; fail=1; }
             done
@@ -229,7 +242,7 @@ jobs:
             # 这不是假设：flare-im-core-sdk 的安装块为了标注 feature 就是表式的，
             # 第一版正则当场把 pins 读成空，于是「一个 pin 都没有」那条误判成红。
             # 取依赖那一行里第一个以数字开头的带引号串，两种写法都覆盖得到。
-            pins=$(grep -E "^[[:space:]]*$name[[:space:]]*=" "$f" \
+            pins=$(grep -E "^[[:space:]]*${name}[[:space:]]*=" "$f" \
                      | grep -oE '"[0-9][^"]*"' | tr -d '"' | sort -u)
             if [ -z "$pins" ]; then
               echo "✗ $f 里没有任何 $name 的依赖示例"
