@@ -296,6 +296,13 @@
           "description": "One of [`PluginAdmin::pages`].",
           "type": "string"
         },
+        "pages": {
+          "description": "A workspace's independently authorized pages. Empty keeps a single-page entry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminNavigationPage"
+          }
+        },
         "section": {
           "$ref": "#/$defs/AdminSection"
         }
@@ -306,6 +313,43 @@
         "section",
         "label",
         "page"
+      ]
+    },
+    "AdminNavigationPage": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "page": {
+          "type": "string"
+        },
+        "parentPage": {
+          "description": "Context page whose toolbar offers this auxiliary page; never grants access.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "placement": {
+          "$ref": "#/$defs/AdminNavigationPlacement",
+          "default": "tab"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "page",
+        "label"
+      ]
+    },
+    "AdminNavigationPlacement": {
+      "type": "string",
+      "enum": [
+        "tab",
+        "tool"
       ]
     },
     "AdminOperation": {
@@ -2360,6 +2404,11 @@
           "const": "text"
         },
         {
+          "description": "Secret text: no default, data binding or durable page command.",
+          "type": "string",
+          "const": "password"
+        },
+        {
           "description": "Multi-line text; value is a string (newlines allowed).",
           "type": "string",
           "const": "textarea"
@@ -2464,6 +2513,13 @@
     "UiPageTransition": {
       "type": "object",
       "properties": {
+        "actionId": {
+          "description": "Execute this declared, form-free durable action after the initiating\noperation succeeds. Never executed when a page is read or opened.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "input": {
           "type": "object",
           "additionalProperties": {
