@@ -30,11 +30,26 @@ jobs:
       fail-fast: false
       matrix:
         crate: [flare-plugin-host, flare-plugin-kit, flare-plugin-wasm]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: isolated-ci-only
+          POSTGRES_DB: flare_plugin_test_devkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: ${{ matrix.crate }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # 多仓库结构：path 依赖指向同级仓库目录。单仓 checkout 后这些路径不存在，
       # cargo 会直接解析失败，所以按开发时的布局把依赖仓拉到同级位置。
@@ -69,8 +84,13 @@ jobs:
       - name: clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
-      - name: test
-        run: cargo test --locked --all-targets
+      - name: Test with an owned database
+        env:
+          FLARE_PLUGIN_TEST_DATABASE_URL: postgres://postgres:isolated-ci-only@127.0.0.1:5432/flare_plugin_test_devkit
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$PG_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres             -c "COMMENT ON DATABASE flare_plugin_test_devkit IS 'flare-plugin-owned/v1'"
+          cargo test --locked --all-targets -- --include-ignored --test-threads=1
 
       # 文档里的代码片段会被 rustdoc 当 doctest 编译。
       # 这是文档腐坏唯一的自动信号：API 改了名而文档没跟上，这里会红。
