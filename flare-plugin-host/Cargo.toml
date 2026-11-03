@@ -1,0 +1,47 @@
+[package]
+name = "flare-plugin-host"
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.94.0"
+authors = ["Flare Team"]
+license = "Apache-2.0"
+description = "Flare 能力插件的宿主接入库：声明、注册、注销"
+repository = "https://github.com/flare-im/flare-plugin-devkit"
+homepage = "https://github.com/flare-im/flare-plugin-devkit"
+documentation = "https://docs.rs/flare-plugin-host"
+keywords = ["plugin", "grpc", "flare"]
+categories = ["api-bindings"]
+readme = "README.md"
+
+[dependencies]
+# 注册契约 v2 的消息定义。约束写 2.2 是因为本库直接使用
+# declared_operations / manifest_sha256 等字段——低于该版本编译不过。
+flare-grpc-proto = { version = "2.2.0", path = "../../flare-protocol-grpc" }
+# 注册携带签名的内部上下文（x-flare-ctx，v4 R3）：Service 身份由本库按次签发。
+flare-server-core = { version = "1.1.1", path = "../../flare-server-runtime", features = ["grpc"] }
+tonic = "0.14"
+tokio = { version = "1.40", features = ["time", "sync", "signal", "fs", "io-util"] }
+tracing = "0.1"
+thiserror = "2"
+flare-plugin-protocol = { version = "0.1.0", path = "../../flare-protocol/flare-plugin-protocol" }
+
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+serde_json = "1"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+prost-types = "0.14"
+reqwest = { version = "0.12", features = ["json"] }
+
+# 只给 examples/echo_plugin.rs 用。示例做成 cargo example 而不是独立 crate，
+# 是因为外部读者拿到的是 .crate 包与 docs.rs —— 包外的目录他们看不到。
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+prost-types = "0.14"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+
+# cargo 默认只**编译** example、不跑它的测试。示例里那条「声明清单 vs 分发臂」
+# 的自检因此会静默失效 —— 而它恰恰是这个示例最值得抄走的部分。
+[[example]]
+name = "echo_plugin"
+test = true

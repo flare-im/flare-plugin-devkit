@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SdkPluginManifest",
+  "type": "object",
+  "properties": {
+    "displayName": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SdkPluginEventManifest"
+      }
+    },
+    "id": {
+      "type": "string"
+    },
+    "minSdkVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "namespaces": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SdkPluginOperationManifest"
+      },
+      "maxItems": 256,
+      "minItems": 1
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SdkPluginPermissionManifest"
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "uiKits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SdkPluginUiKitManifest"
+      }
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "displayName",
+    "namespaces",
+    "operations"
+  ],
+  "$defs": {
+    "SdkPluginEventManifest": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema": true
+      },
+      "required": [
+        "id",
+        "schema"
+      ]
+    },
+    "SdkPluginOperationManifest": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputSchema": true,
+        "op": {
+          "type": "string"
+        },
+        "outputSchema": true,
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    "SdkPluginPermissionManifest": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "description"
+      ]
+    },
+    "SdkPluginUiKitManifest": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "package": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "package"
+      ]
+    }
+  }
+}

@@ -1,0 +1,244 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+# 本仓没有根 Cargo.toml —— 它是说明壳，每个插件是自成一体的 crate。
+# 所以每个 job 都要 cd 进具体 crate，别在仓根跑 cargo。
+# flare-strom-sfu 有自己的远端且被本仓 gitignore，不在这里构建。
+defaults:
+  run:
+    working-directory: flare-plugin-host
+
+jobs:
+  check:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 多仓库结构：path 依赖指向同级仓库目录。单仓 checkout 后这些路径不存在，
+      # cargo 会直接解析失败，所以按开发时的布局把依赖仓拉到同级位置。
+      - name: 拉取同级仓库
+        working-directory: .
+        run: |
+          BR="${GITHUB_REF_NAME:-main}"
+          clone() {
+            git clone --depth 1 -b "$BR" "$1" "$2" 2>/dev/null \
+              || git clone --depth 1 "$1" "$2"
+          }
+          clone https://github.com/flare-im/flare-protocol.git "../flare-protocol"
+          clone https://github.com/flare-im/flare-protocol-grpc.git "../flare-protocol-grpc"
+          # 注册携带 Service 签名上下文，plugin-host 按 path 依赖 flare-server-core。
+          clone https://github.com/flare-im/flare-server-runtime.git "../flare-server-runtime"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 契约由 .proto 生成，构建期需要 protobuf 编译器。
+      - name: 安装 protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y protobuf-compiler
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      # --all-targets 是必须的：examples/tests 不在默认目标里，
+      # 本仓曾因此让一个加了字段后没跟上的 example 长期编不过而无人发现。
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test
+
+      # 文档里的代码片段会被 rustdoc 当 doctest 编译。
+      # 这是文档腐坏唯一的自动信号：API 改了名而文档没跟上，这里会红。
+      - name: doctest
+        run: cargo test --doc
+
+  publishable:
+    name: 外部能否构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 依赖写成 { version, path } 双声明：本地走 path，外部消费者走 registry。
+      # 同级目录一在就永远编得过 —— 哪怕 registry 上根本没有那个版本。
+      # 第三方拉下来编不出来，而普通 CI 全绿。
+      #
+      # `cargo publish --dry-run` 是唯一会把 path 依赖换成 registry 版本
+      # 再解析一遍的命令，所以它照样能发现这件事。别换成 cargo build：
+      # 那验的是本地，不是外部。
+      #
+      # 同级仓库**仍要拉**：dry-run 会做版本替换，但 cargo 得先把 path 指向的
+      # 清单读进来才能开始。第一版这里刻意不拉，结果失败在
+      # 「No such file or directory」——那是环境缺失，不是版本解析失败，
+      # 判据形同虚设。
+      - name: 拉取同级仓库
+        working-directory: .
+        run: |
+          BR="${GITHUB_REF_NAME:-main}"
+          clone() {
+            git clone --depth 1 -b "$BR" "$1" "$2" 2>/dev/null \
+              || git clone --depth 1 "$1" "$2"
+          }
+          clone https://github.com/flare-im/flare-protocol.git "../flare-protocol"
+          clone https://github.com/flare-im/flare-protocol-grpc.git "../flare-protocol-grpc"
+          # 注册携带 Service 签名上下文，plugin-host 按 path 依赖 flare-server-core。
+          clone https://github.com/flare-im/flare-server-runtime.git "../flare-server-runtime"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装 protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y protobuf-compiler
+      - name: registry 依赖可解析
+        run: cargo publish --dry-run --allow-dirty
+
+      # 比「LICENSE 文件在不在」更强的判据：它到底有没有被打进 .crate。
+      # include/exclude 写歪了就会出现「仓里有、包里没有」——而 dry-run 本身
+      # 对缺少许可证正文只是 warning，不会红。发出去的包不带自己声明的协议正文，
+      # 是 Apache-2.0 §4(a) 的合规问题（flare-plugin-host 此前就是这样发出去的）。
+      - name: LICENSE 正文真的进了包
+        shell: bash
+        run: |
+          cargo package --list --allow-dirty | grep -qE '^LICENSE' \
+            || { echo "✗ cargo package 的清单里没有 LICENSE"; cargo package --list --allow-dirty; exit 1; }
+          echo "  ✓ LICENSE 在打包清单里"
+
+  # MSRV 门禁：Cargo.toml 里一直写着 rust-version，但在此之前**没有任何地方验证过**。
+  # 这个 crate 是文档引导外部插件作者直接依赖的入口,声明的最低版本编不过,
+  # 坏的是别人的第一次构建。
+  #
+  # 工具链版本从 Cargo.toml 现读,不在这里再写一遍:同一个数字放两处必然漂移。
+  msrv:
+    name: 最低支持 Rust 版本
+    runs-on: ubuntu-latest
+    # 这道门禁问的是「编不编得过」,不是「lint 干不干净」。老工具链的 lint 集合
+    # 与 stable 不同,带 -D warnings 会因为无关的 lint 差异变红。
+    env:
+      RUSTFLAGS: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 拉取同级仓库
+        working-directory: .
+        run: |
+          BR="${GITHUB_REF_NAME:-main}"
+          clone() {
+            git clone --depth 1 -b "$BR" "$1" "$2" 2>/dev/null \
+              || git clone --depth 1 "$1" "$2"
+          }
+          clone https://github.com/flare-im/flare-protocol.git "../flare-protocol"
+          clone https://github.com/flare-im/flare-protocol-grpc.git "../flare-protocol-grpc"
+          # 注册携带 Service 签名上下文，plugin-host 按 path 依赖 flare-server-core。
+          clone https://github.com/flare-im/flare-server-runtime.git "../flare-server-runtime"
+
+      - name: 读取 Cargo.toml 声明的 MSRV
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 安装 protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y protobuf-compiler
+
+      - name: cargo check（按声明的 MSRV）
+        run: cargo check --all-targets
+
+  # 许可证口径：README 是 crates.io 页面渲染的内容，它写的许可证与 Cargo.toml
+  # 声明的不一致是法务问题，不是排版问题——而且没有任何测试会碰到它。
+  #
+  # 已经真的发生过（2026-08-20 全仓核查）：flare-grpc-proto 的中英文 README 都写着
+  # 「MIT（见 Cargo.toml）」，而 Cargo.toml 写的是 Apache-2.0，自己打自己的脸；
+  # flare-proto 的中文 README 写 MIT、英文写 Apache-2.0，同仓中英文互相矛盾。
+  # flare-core 早前修过同类问题，但当时只修了自己那一个仓，没往外扫。
+  #
+  # 另一条：声明了 license 却没把 LICENSE 正文打进包里，等于发了一个不满足
+  # 自己所声明许可证（Apache-2.0 §4(a) 要求随件附带许可证副本）的包。
+  readme-claims:
+    name: 门面文档口径
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: README 许可证声明与 Cargo.toml 一致
+        shell: bash
+        run: |
+          declared=$(grep -m1 '^license' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          [ -n "$declared" ] || { echo "✗ Cargo.toml 没有 license 字段"; exit 1; }
+          key=$(echo "${declared%%-*}" | tr 'A-Z' 'a-z')
+          fail=0
+          for f in README.md README.zh-CN.md; do
+            [ -f "$f" ] || continue
+            # 只看 License / 许可 小节：正文里提到别的协议（依赖清单之类）不该误判
+            section=$(awk '/^#+ *(License|许可)/{f=1;next} /^#+ /{f=0} f' "$f")
+            [ -n "$section" ] || { echo "✗ $f 找不到 License / 许可 小节"; fail=1; continue; }
+            echo "$section" | grep -qi "$key" \
+              || { echo "✗ $f 许可证小节没提 $declared"; fail=1; }
+            for other in MIT GPL BSD MPL ISC; do
+              o=$(echo "$other" | tr 'A-Z' 'a-z'); [ "$o" = "$key" ] && continue
+              echo "$section" | grep -qiE "\b$other\b" \
+                && { echo "✗ $f 许可证小节写着 $other，而 Cargo.toml 声明 $declared"; fail=1; }
+            done
+          done
+          [ $fail -eq 0 ] && echo "  ✓ README 许可证声明与 Cargo.toml（$declared）一致"
+          exit $fail
+
+      # 这里只查文件在不在——「真的进了包」是更强的判据，由 publishable job 里的
+      # cargo package --list 负责（那个 job 才有同级仓与 protoc 这些前置条件）。
+      - name: crate 目录里有 LICENSE 正文
+        shell: bash
+        run: |
+          ls LICENSE* >/dev/null 2>&1 \
+            || { echo "✗ 没有 LICENSE 文件。声明了许可证却不随件附带正文，发出去的包不满足它自己声明的协议。"; exit 1; }
+          echo "  ✓ $(ls LICENSE*) 在 crate 目录里"
+
+      # README 里的版本号：编译判据对它是瞎的（cargo 的 ^ 语义会把旧 pin 解析到
+      # 新版本，新旧都编得过），但那个数字是给人读、给人照抄的。
+      # 已发生过：flare-proto 写 2.0.1（实际 2.1.0）、flare-core 写 1.0.1（实际 1.1.1）。
+      #
+      # 「一个 pin 都没有」同样判红：已发布的 crate，它的 crates.io 页面上总得写清楚
+      # 怎么装。flare-im-core-sdk 与 flare-plugin-host 此前就是一行安装说明都没有。
+      - name: README 里的版本号还是当前发布版
+        shell: bash
+        run: |
+          name=$(grep -m1 '^name' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          latest=$(curl -sf --max-time 25 -H "User-Agent: flare-readme-gate" \
+            "https://crates.io/api/v1/crates/$name" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["crate"]["max_version"])' 2>/dev/null) || latest=""
+          # registry 抖动不该阻断一个无关的 PR：查不到就跳过并说明，不静默通过。
+          if [ -z "$latest" ]; then echo "  · 跳过版本新鲜度（查不到 registry）"; exit 0; fi
+          fail=0
+          for f in README.md README.zh-CN.md; do
+            [ -f "$f" ] || continue
+            # 两种写法都要认，只认字符串式会在依赖块改成表式那天悄悄失效：
+            #   flare-x = "1.2"                              ← 字符串式
+            #   flare-x = { version = "1.2", features = [] }  ← 表式
+            # 这不是假设：flare-im-core-sdk 的安装块为了标注 feature 就是表式的，
+            # 第一版正则当场把 pins 读成空，于是「一个 pin 都没有」那条误判成红。
+            # 取依赖那一行里第一个以数字开头的带引号串，两种写法都覆盖得到。
+            pins=$(grep -E "^[[:space:]]*$name[[:space:]]*=" "$f" \
+                     | grep -oE '"[0-9][^"]*"' | tr -d '"' | sort -u)
+            if [ -z "$pins" ]; then
+              echo "✗ $f 里没有任何 $name 的依赖示例"
+              echo "  这是个已发布的 crate，README 就是它的 crates.io 页面——上面得写清楚怎么装。"
+              fail=1; continue
+            fi
+            for p in $pins; do
+              case "$latest" in "$p"|"$p".*) ;; *) echo "✗ $f 写着 $name $p，当前发布版是 $latest"; fail=1;; esac
+            done
+          done
+          [ $fail -eq 0 ] && echo "  ✓ README 里的 $name 版本号与 registry（$latest）一致"
+          exit $fail

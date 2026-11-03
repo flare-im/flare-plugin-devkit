@@ -1,0 +1,28 @@
+[package]
+name = "flare-plugin-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+license = "Apache-2.0"
+description = "Bounded, capability-only server WASM runtime for Flare plugins"
+
+[dependencies]
+flare-plugin-host = { path = "../flare-plugin-host" }
+flare-plugin-protocol = { path = "../../flare-protocol/flare-plugin-protocol" }
+flare-grpc-proto = { path = "../../flare-protocol-grpc" }
+wasmi = { version = "=2.0.0", default-features = false, features = ["std", "validate", "stable", "deterministic"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tonic = "0.14"
+prost-types = "0.14"
+thiserror = "2"
+jsonschema = { version = "=0.59.0", default-features = false }
+
+[dev-dependencies]
+wat = "1"
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+base64 = "0.22"
+tokio-stream = { version = "0.1", features = ["net"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+flare-server-core = { path = "../../flare-server-runtime", features = ["grpc"] }

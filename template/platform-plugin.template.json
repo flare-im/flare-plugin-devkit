@@ -1,0 +1,71 @@
+{
+  "$schema": "../schema/platform_plugin_manifest.schema.json",
+  "manifestVersion": 1,
+  "pluginId": "example.notice",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "displayName": "Example Notice Plugin",
+  "description": "A sample tenant-scoped plugin manifest.",
+  "publisher": {
+    "publisherId": "example",
+    "displayName": "Example Publisher"
+  },
+  "runtime": {
+    "kind": "grpc",
+    "service": "flare.plugin.example.notice.v1.PluginService",
+    "protocol": "flare.capability.v1"
+  },
+  "dependencies": [],
+  "capabilities": [
+    {
+      "id": "example.notice",
+      "operations": [
+        {
+          "id": "publish",
+          "inputSchema": {
+            "type": "object",
+            "required": ["title", "body"],
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "body": { "type": "string", "minLength": 1, "maxLength": 12000 }
+            },
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": ["noticeId"],
+            "properties": { "noticeId": { "type": "string", "minLength": 1 } },
+            "additionalProperties": false
+          },
+          "permissionIds": ["example.notice.publish"],
+          "idempotent": true,
+          "timeoutMs": 5000
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    {
+      "id": "example.notice.publish",
+      "description": "Publish a tenant-scoped notice.",
+      "dataScopes": ["tenant.notice.write"],
+      "riskLevel": "medium"
+    }
+  ],
+  "events": [],
+  "hooks": [],
+  "clientExtensions": {
+    "platforms": ["web", "tauri", "android", "ios", "flutter", "harmonyos"],
+    "contributions": []
+  },
+  "dataPolicy": {
+    "tenantIsolation": "required",
+    "uninstallBehavior": "retain",
+    "migrationPolicy": "versioned"
+  },
+  "artifact": {
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "signatureRef": "REPLACE_WITH_PUBLISHING_PIPELINE_SIGNATURE"
+  },
+  "hostVersionRange": "^1.0.0"
+}

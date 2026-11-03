@@ -1,0 +1,2746 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginManifest",
+  "description": "Canonical platform contract. Endpoint addresses, secrets and tenant state are\nsupplied by the host; they must never be embedded in a published manifest.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "admin": {
+      "description": "The management surface (Admin Extension Contract), see\n[`crate::admin::PluginAdmin`].",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PluginAdmin"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "apiVersion": {
+      "type": "string"
+    },
+    "artifact": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PluginArtifact"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Capability"
+      }
+    },
+    "clientExtensions": {
+      "$ref": "#/$defs/ClientExtensions",
+      "default": {
+        "contributions": [],
+        "nativeCapabilities": [],
+        "platforms": []
+      }
+    },
+    "configurationSchema": true,
+    "dataPolicy": {
+      "$ref": "#/$defs/DataPolicy",
+      "default": {
+        "migrationPolicy": "none",
+        "tenantIsolation": "required",
+        "uninstallBehavior": "retain"
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PluginDependency"
+      }
+    },
+    "description": {
+      "type": "string",
+      "default": ""
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PluginEvent"
+      }
+    },
+    "hooks": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PluginHook"
+      }
+    },
+    "hostVersionRange": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "manifestVersion": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PluginPermission"
+      }
+    },
+    "pluginId": {
+      "type": "string"
+    },
+    "publisher": {
+      "$ref": "#/$defs/Publisher"
+    },
+    "runtime": {
+      "$ref": "#/$defs/PluginRuntime"
+    },
+    "serviceOperations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ServiceOperation"
+      }
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "pluginId",
+    "version",
+    "apiVersion",
+    "displayName",
+    "publisher",
+    "runtime",
+    "capabilities",
+    "permissions"
+  ],
+  "$defs": {
+    "AdminAudience": {
+      "oneOf": [
+        {
+          "description": "Tenant staff (and platform staff acting for the tenant).",
+          "type": "string",
+          "const": "tenant"
+        },
+        {
+          "description": "Platform staff only.",
+          "type": "string",
+          "const": "platform"
+        }
+      ]
+    },
+    "AdminEventRef": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion"
+      ]
+    },
+    "AdminEvents": {
+      "type": "object",
+      "properties": {
+        "emit": {
+          "description": "Events the plugin emits (each one of the manifest's `events`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminEventRef"
+          }
+        },
+        "subscribe": {
+          "description": "Events the plugin wants; only the shape is declared, Core does not deliver them yet.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminEventRef"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdminHintWidget": {
+      "type": "string",
+      "enum": [
+        "text",
+        "textarea",
+        "number",
+        "switch",
+        "select",
+        "multiSelect",
+        "secret"
+      ]
+    },
+    "AdminLifecycle": {
+      "type": "object",
+      "properties": {
+        "configurationCarryOver": {
+          "description": "An upgrade keeps the tenant configuration (new keys take their default,\nremoved keys are dropped and audited). Default true.",
+          "type": "boolean"
+        },
+        "migrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminMigration"
+          }
+        },
+        "uninstall": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdminUninstall"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdminMigration": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "Semantic version range of the installed version it upgrades.",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/AdminMigrationMode"
+        },
+        "reversible": {
+          "description": "`false`: once run, the platform refuses to enable an older version.",
+          "type": "boolean"
+        },
+        "to": {
+          "description": "The version it upgrades to; at most this manifest's version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "mode",
+        "reversible"
+      ]
+    },
+    "AdminMigrationMode": {
+      "oneOf": [
+        {
+          "description": "The platform disables the plugin, runs the migration, waits for the\nruntime ACK, then enables it.",
+          "type": "string",
+          "const": "offline"
+        },
+        {
+          "description": "Runs while the plugin serves.",
+          "type": "string",
+          "const": "online"
+        }
+      ]
+    },
+    "AdminNavigation": {
+      "type": "object",
+      "properties": {
+        "audience": {
+          "$ref": "#/$defs/AdminAudience"
+        },
+        "icon": {
+          "description": "Kit icon name ([`crate::manifest::UI_ICON_PATTERN`]).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "order": {
+          "description": "Ascending position in its section (default 1000).",
+          "type": "integer",
+          "format": "int32"
+        },
+        "page": {
+          "description": "One of [`PluginAdmin::pages`].",
+          "type": "string"
+        },
+        "section": {
+          "$ref": "#/$defs/AdminSection"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "section",
+        "label",
+        "page"
+      ]
+    },
+    "AdminOperation": {
+      "type": "object",
+      "properties": {
+        "auditTarget": {
+          "description": "JSON pointer into the operation input naming the audited target (the\npoll id of a close).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Wire operation declared in `capabilities`.",
+          "type": "string"
+        },
+        "mode": {
+          "description": "Must equal the capability operation's `mode`.",
+          "$ref": "#/$defs/OperationMode"
+        },
+        "permission": {
+          "description": "One of [`PluginAdmin::permissions`]: the staff ticket must carry its code.",
+          "type": "string"
+        },
+        "requiresReason": {
+          "description": "The console asks the staff member for a reason; Core records it in the\naudit with the call.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "mode",
+        "permission"
+      ]
+    },
+    "AdminPage": {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "document": {
+          "description": "Rendered with the generic plugin renderer; every action, rows source\nand the detail call admin operations only.",
+          "$ref": "#/$defs/UiDocument"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AdminPageKind"
+        },
+        "permission": {
+          "description": "One of [`PluginAdmin::permissions`]: needed to see the page.",
+          "type": "string"
+        },
+        "widgets": {
+          "description": "`dashboard` only (`1..=12`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminWidget"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "permission",
+        "document"
+      ]
+    },
+    "AdminPageKind": {
+      "oneOf": [
+        {
+          "description": "A rows block (filters, row actions, paging) and an optional detail.",
+          "type": "string",
+          "const": "list"
+        },
+        {
+          "description": "A document over one result; no rows.",
+          "type": "string",
+          "const": "detail"
+        },
+        {
+          "description": "Action forms; no rows.",
+          "type": "string",
+          "const": "form"
+        },
+        {
+          "description": "Kit whitelisted widgets ([`AdminWidgetKind`]).",
+          "type": "string",
+          "const": "dashboard"
+        }
+      ]
+    },
+    "AdminPermission": {
+      "type": "object",
+      "properties": {
+        "defaultRoles": {
+          "description": "Built-in roles the platform grants it to on install (`org_owner`, …);\ntenants may assign it to other roles.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "description": "`[a-z][a-z0-9_-]{0,31}`, unique.",
+          "type": "string"
+        },
+        "label": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "risk"
+      ]
+    },
+    "AdminSection": {
+      "type": "string",
+      "enum": [
+        "plugins",
+        "operations",
+        "analytics"
+      ]
+    },
+    "AdminSettings": {
+      "type": "object",
+      "properties": {
+        "uiHints": {
+          "description": "Presentation of the configuration form generated from\n`configurationSchema`, by top-level property.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AdminUiHint"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdminUiHint": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "description": "Group key the form puts the field under (`[a-z][a-z0-9_-]{0,31}`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "widget": {
+          "$ref": "#/$defs/AdminHintWidget"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "widget"
+      ]
+    },
+    "AdminUninstall": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "$ref": "#/$defs/UninstallBehavior"
+        },
+        "export": {
+          "description": "The plugin implements the data export protocol (`flare.plugin.data.v1`),\nso tenants can export before and for a while after uninstalling.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "behavior"
+      ]
+    },
+    "AdminWidget": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "JSON pointer into its result: a number (`kit:stat`) or an array of\n`{atMs, value}` points (`kit:chart.timeseries`).",
+          "type": "string"
+        },
+        "source": {
+          "description": "An admin `query` operation, called with `{}`.",
+          "type": "string"
+        },
+        "widget": {
+          "$ref": "#/$defs/AdminWidgetKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "widget",
+        "label",
+        "source",
+        "path"
+      ]
+    },
+    "AdminWidgetKind": {
+      "description": "A dashboard widget from the kit's whitelist; never plugin code.",
+      "type": "string",
+      "enum": [
+        "kit:stat",
+        "kit:chart.timeseries"
+      ]
+    },
+    "Capability": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginOperation"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "operations"
+      ]
+    },
+    "ClientExtensions": {
+      "type": "object",
+      "properties": {
+        "contributions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiContribution"
+          }
+        },
+        "nativeCapabilities": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NativeCapability"
+          }
+        },
+        "platforms": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClientPlatform"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ClientPlatform": {
+      "type": "string",
+      "enum": [
+        "web",
+        "tauri",
+        "android",
+        "ios",
+        "flutter",
+        "harmonyos"
+      ]
+    },
+    "DataPolicy": {
+      "type": "object",
+      "properties": {
+        "migrationPolicy": {
+          "$ref": "#/$defs/MigrationPolicy",
+          "default": "none"
+        },
+        "tenantIsolation": {
+          "$ref": "#/$defs/TenantIsolation",
+          "default": "required"
+        },
+        "uninstallBehavior": {
+          "$ref": "#/$defs/UninstallBehavior",
+          "default": "retain"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HookFailureMode": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "skip"
+      ]
+    },
+    "HostCapability": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "im.conversation.read",
+            "im.conversation.participants.read",
+            "social.group.member.read",
+            "plugin.service.dispatch"
+          ]
+        },
+        {
+          "description": "Read: which of up to 50 user ids are members of the bound conversation\n([`ResourceRequest::ConversationMembersCheck`], [`MembersCheckView`]).",
+          "type": "string",
+          "const": "im.conversation.members.check"
+        },
+        {
+          "description": "Write: publish [`SharedState`] for an entity bound to a message of the\ncalling plugin. Requested with [`ResourceWriteRequest`].",
+          "type": "string",
+          "const": "im.plugin.entity_state.publish"
+        },
+        {
+          "description": "Write: deliver a non-durable packet to online devices of members of one\nconversation. Requested with [`ResourceWriteRequest::RealtimeDeliver`].",
+          "type": "string",
+          "const": "im.realtime.deliver"
+        }
+      ]
+    },
+    "MigrationPolicy": {
+      "type": "string",
+      "enum": [
+        "none",
+        "backward-compatible",
+        "versioned"
+      ]
+    },
+    "NativeCapability": {
+      "type": "string",
+      "enum": [
+        "selectImage",
+        "selectFile",
+        "camera",
+        "microphone",
+        "clipboardWrite"
+      ]
+    },
+    "OperationMode": {
+      "oneOf": [
+        {
+          "description": "May change state; invoked on a user gesture or by the plugin's own flow.",
+          "type": "string",
+          "const": "command"
+        },
+        {
+          "description": "Reads only; safe for hosts to call in the background.",
+          "type": "string",
+          "const": "query"
+        }
+      ]
+    },
+    "PluginAdmin": {
+      "type": "object",
+      "properties": {
+        "contractVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "events": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdminEvents"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdminLifecycle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "navigation": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminNavigation"
+          }
+        },
+        "operations": {
+          "description": "The admin operations, each a declared capability operation that no\nclient contribution uses.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminOperation"
+          }
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminPage"
+          }
+        },
+        "permissions": {
+          "description": "Staff permissions of this plugin, granted as\n[`crate::invocation::plugin_permission`] codes\n(`plugin:<pluginId>:<id>`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdminPermission"
+          }
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdminSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "permissions",
+        "operations"
+      ]
+    },
+    "PluginArtifact": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "signatureRef": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "signatureRef"
+      ]
+    },
+    "PluginDependency": {
+      "type": "object",
+      "properties": {
+        "optional": {
+          "type": "boolean",
+          "default": false
+        },
+        "pluginId": {
+          "type": "string"
+        },
+        "versionRange": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pluginId",
+        "versionRange"
+      ]
+    },
+    "PluginEvent": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "schema": true,
+        "schemaVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "schema"
+      ]
+    },
+    "PluginHook": {
+      "type": "object",
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "failureMode": {
+          "description": "A request to the host. The host owns the permitted hook failure policy.",
+          "$ref": "#/$defs/HookFailureMode"
+        },
+        "id": {
+          "type": "string"
+        },
+        "permissionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "apiVersion",
+        "timeoutMs",
+        "failureMode",
+        "permissionIds"
+      ]
+    },
+    "PluginOperation": {
+      "type": "object",
+      "properties": {
+        "hostCapabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HostCapability"
+          }
+        },
+        "id": {
+          "description": "Relative to the capability id; the wire operation is `<capability>.<id>`.",
+          "type": "string"
+        },
+        "idempotent": {
+          "type": "boolean"
+        },
+        "inputSchema": true,
+        "mode": {
+          "description": "`query` declares that the operation only reads: hosts may call it in\nthe background without a user gesture (a card's `viewerState`, an\naccount entry's `summary`). Default `command`. The plugin still\nauthorizes every call; the mode only says what a host may schedule.",
+          "$ref": "#/$defs/OperationMode"
+        },
+        "outputSchema": true,
+        "permissionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "inputSchema",
+        "outputSchema",
+        "permissionIds",
+        "idempotent",
+        "timeoutMs"
+      ]
+    },
+    "PluginPermission": {
+      "type": "object",
+      "properties": {
+        "dataScopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "riskLevel": {
+          "$ref": "#/$defs/RiskLevel"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "dataScopes",
+        "riskLevel"
+      ]
+    },
+    "PluginRuntime": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "grpc"
+            },
+            "protocol": {
+              "type": "string"
+            },
+            "service": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "service",
+            "protocol"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "abiVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "wasm"
+            },
+            "maxFuel": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "maxMemoryPages": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "module": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "module",
+            "abiVersion",
+            "maxMemoryPages",
+            "maxFuel"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "client"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "Publisher": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "publisherId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisherId",
+        "displayName"
+      ]
+    },
+    "RiskLevel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "ServiceMode": {
+      "type": "string",
+      "enum": [
+        "user",
+        "recovery"
+      ]
+    },
+    "ServiceOperation": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ServiceMode"
+        },
+        "operation": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "mode"
+      ]
+    },
+    "TenantIsolation": {
+      "type": "string",
+      "enum": [
+        "required"
+      ]
+    },
+    "UiAction": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Page commands persist before dispatch. Retry/ack use the original\nauthenticated journal record; a host cannot replace an unknown result.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiPageCommand"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confirm": {
+          "description": "Asked before invoking (translated through `texts`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "continuation": {
+          "description": "Navigate only after a verified successful operation response.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiPageTransition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "form": {
+          "description": "Ids of document inputs the host collects first (`0..=16`, operation\ntargets only); their validated values join the action input under their\nids, which must not repeat a declared input name.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hiddenWhen": {
+          "description": "Presentation only: the action is omitted when any condition matches. The\nplugin still authorizes every invocation; hiding is never a permission.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiCondition"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "label": {
+          "type": "string"
+        },
+        "placement": {
+          "description": "Where the host shows the action: the button row (default) or the\ncard's overflow menu (⋯). A resolved view lists them apart\n([`ResolvedPluginView::actions`], [`ResolvedPluginView::menu_actions`]);\n`hiddenWhen` applies to both. An action a block owns (a choices\nsubmit, a row action) is never placed in the menu.",
+          "$ref": "#/$defs/UiActionPlacement"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiActionStyle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/UiActionTarget"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "target"
+      ]
+    },
+    "UiActionPlacement": {
+      "type": "string",
+      "enum": [
+        "buttons",
+        "menu"
+      ]
+    },
+    "UiActionStyle": {
+      "type": "string",
+      "enum": [
+        "primary",
+        "danger"
+      ]
+    },
+    "UiActionTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "operation"
+            },
+            "operation": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "page"
+            },
+            "page": {
+              "type": "string"
+            },
+            "pluginId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "page"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "capability": {
+              "$ref": "#/$defs/NativeCapability"
+            },
+            "kind": {
+              "type": "string",
+              "const": "native"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "capability"
+          ]
+        }
+      ]
+    },
+    "UiAudience": {
+      "description": "Who sees a composer-action entry. An empty list admits everyone; roles apply\nin group conversations only.",
+      "type": "object",
+      "properties": {
+        "conversationTypes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiConversationType"
+          }
+        },
+        "groupRoles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiGroupRole"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiBlock": {
+      "description": "A display block, tagged by `kind`. Every kind may carry `hiddenWhen`\nconditions that leave it out of the resolved view.",
+      "oneOf": [
+        {
+          "description": "Text, multi-line and collapsible. Exactly one of `text` (literal, at most\n2000 bytes, translated through `texts`) and `path` (a scalar in the data,\nshown up to 4000 characters).",
+          "type": "object",
+          "properties": {
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "maxLines": {
+              "description": "Lines shown collapsed (`1..=20`); the host offers \"expand\" beyond them.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "style": {
+              "$ref": "#/$defs/UiTextStyle"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Label/value rows, with the same rules as the document's `fields`\n(`1..=16`); value labels are translated through `texts`.",
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiField"
+              }
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "fields"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "fields"
+          ]
+        },
+        {
+          "description": "A list of options, positional: option `i` has count `counts[i]`, and the\nselection is a list of indices. Choosing binds `action`, whose input gets\n`{<inputName>: [indices]}` in addition to its declared input. The options\ncome from the data (`optionsPath`) or are declared (`options`), exactly\none of the two.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "description": "Id of a document action with an operation target. The action is not\nlisted with the card's buttons; the block owns it.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "closedWhen": {
+              "description": "Closed when any condition matches (`0..=4`): results shown per\n`showResults`, no choosing.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "countsPath": {
+              "description": "Array of non-negative integers aligned with the options; missing items\ncount 0.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "inputName": {
+              "description": "Action input name of the selection (default `selection`); must not\ncollide with the action's declared input or form.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "choices"
+            },
+            "labelPath": {
+              "description": "Inside an option object: its label (`optionsPath` only).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "maxSelectionsPath": {
+              "description": "A multiple choice's limit: the most options the viewer may choose, a\npositive integer (capped at the option count). Absent, zero or not a\nnumber: no limit beyond the options. Ignored on a single choice.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "multiplePath": {
+              "description": "Truthy (true, non-zero, \"true\") for a multiple choice; single otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "options": {
+              "description": "Declared options (`1..=50`), such as accept / maybe / decline; labels\nare translated through `texts`. Counts and the selection are still read\nfrom their paths, by position.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiChoiceOption"
+              }
+            },
+            "optionsPath": {
+              "description": "Array of option labels (scalars), or of objects read with `labelPath`.\n`1..=50` options, each with a non-blank label, or the block is not shown.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "selectedPath": {
+              "description": "The viewer's choice: an array of indices, or one index (usually local\nstate, such as `/mySelection`).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "showResults": {
+              "$ref": "#/$defs/UiShowResults"
+            },
+            "totalPath": {
+              "description": "Denominator of the percentages (such as voter count); the sum of counts\nwhen absent.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Entries (solitaire lines, comments, voters). The first `limit` are shown;\nwhen the total is larger and the contribution offers its detail, the host\noffers \"view all\", which opens that detail (`more`). Without a detail, with\nthe detail hidden by its `hiddenWhen`, and inside the detail document\nitself, `more` is false.\n\nNumbering: with `numbered` (the default) kits show each entry's `index`;\nwith `numbered: false` they show no position numbers at all.\n\nGrouping (`groupPath`): entries are grouped by the scalar at `groupPath`\ninside each entry, in data order: a new group starts wherever that key\ndiffers from the previous entry's (so the plugin sends entries already\nordered by group, such as voters by option). The first entry of each group\ncarries the group header ([`ResolvedUiEntry::group`]): its key, its label\n(`groupLabelPath`, else the key), and when given its count\n(`groupCountPath`, such as the option's votes) and total\n(`groupTotalPath`, such as all votes) with the percentage. In a grouped\nblock `index` restarts at 1 in each group, and an entry without a key at\n`groupPath` is not shown. Kits render one flat list and put a header row\nbefore every entry that has `group`.",
+          "type": "object",
+          "properties": {
+            "countPath": {
+              "description": "Total number of entries when the data holds only the latest ones.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "emptyText": {
+              "description": "Shown when the list is present but empty.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "groupCountPath": {
+              "description": "Inside an entry: its group's count, a non-negative integer. Requires\n`groupPath`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "groupLabelPath": {
+              "description": "Inside an entry: its group's label (the key when absent or blank).\nRead from the first entry of each group; requires `groupPath`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "groupPath": {
+              "description": "Inside an entry: its group key (a scalar). Turns grouping on.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "groupTotalPath": {
+              "description": "Inside an entry: the denominator of the group percentages, a\nnon-negative integer. Requires `groupPath`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "itemsPath": {
+              "description": "Array of entries: objects read with the paths below, or strings. A\nstring (or another scalar) is the entry text when `textPath` is\nabsent, so a string array such as the latest lines kept in shared\nstate renders as is.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "entries"
+            },
+            "limit": {
+              "description": "`1..=50`, default 10.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "namePath": {
+              "description": "Display name inside an entry.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "numbered": {
+              "type": "boolean"
+            },
+            "textPath": {
+              "description": "Inside an entry object: its text. When set, an entry that is not an\nobject has nothing to show and is skipped.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "userIdsPath": {
+              "description": "Array of user ids aligned with the entries by position (a top-level\npath, such as `/lineUserIds` beside `/lines`). An entry without a user\nof its own (a string entry, or no value at `userPath`) takes the id at\nits position, when that is a valid user id.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "userPath": {
+              "description": "User id inside an entry; the host resolves avatar (and name, when\n`namePath` is absent).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "valueLabels": {
+              "description": "A badge for each entry: an enumerated value inside the entry mapped to\na label and a tone (a ledger line's kind).",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiValueLabels"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "itemsPath"
+          ]
+        },
+        {
+          "description": "Avatar stacks with counts, optionally grouped by status (confirmed and not\nyet confirmed).",
+          "type": "object",
+          "properties": {
+            "groups": {
+              "description": "`1..=4` groups; a group whose paths are both missing is not shown.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiPeopleGroup"
+              }
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "people"
+            },
+            "max": {
+              "description": "Avatars per group (`1..=10`, default 5).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "groups"
+          ]
+        },
+        {
+          "description": "A badge: the scalar at `path` mapped to a label and a tone; an unmapped\nvalue is shown as sent, neutral.",
+          "type": "object",
+          "properties": {
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "status"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "values": {
+              "description": "`0..=32` entries; keys `1..=64` bytes.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/UiStatusValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "description": "Done out of total (non-negative integers), with the percentage.",
+          "type": "object",
+          "properties": {
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "progress"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "totalPath": {
+              "type": "string"
+            },
+            "valuePath": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "valuePath",
+            "totalPath"
+          ]
+        },
+        {
+          "description": "An instant or a range in epoch milliseconds (integer or digit string). The\nhost formats it in the viewer's locale and time zone; with `countdown` it\ncounts down to the end (or to the instant) while that is in the future.",
+          "type": "object",
+          "properties": {
+            "countdown": {
+              "type": "boolean"
+            },
+            "endPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "time"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "divider"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Secondary text (an anonymity notice). Exactly one of `text` and `path`, as\nfor a text block.",
+          "type": "object",
+          "properties": {
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "note"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tone": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiTone"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Page and admin page (`admin.pages`) documents only.",
+          "type": "object",
+          "properties": {
+            "actions": {
+              "description": "`0..=4` ids of document actions with operation or page targets (an\nadmin page's: operation targets only). Their `hiddenWhen` and declared\ninput read the row; the block owns them. A page target opens that page\nwith the row's bound input as its arguments.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "columns": {
+              "description": "`1..=12`.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiColumn"
+              }
+            },
+            "cursorPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "emptyText": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "filters": {
+              "description": "Ids of the document inputs that are filters (`0..=16`, unique). Absent:\nevery input is a filter; `[]`: none is.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition matches (`0..=4`). Unlike the row\nactions' conditions these read the page (the source result), not a row.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "keyPath": {
+              "description": "Inside a row: its stable key (scalar); rows without one are skipped.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "rows"
+            },
+            "path": {
+              "description": "Array of row objects; at most 100 are resolved.",
+              "type": "string"
+            },
+            "source": {
+              "description": "Wire operation declared by the plugin.",
+              "type": "string"
+            },
+            "valueLabels": {
+              "description": "A badge for each row, as for entries ([`UiValueLabels`], read inside\nthe row).",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UiValueLabels"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "path",
+            "keyPath",
+            "columns"
+          ]
+        }
+      ]
+    },
+    "UiChoiceOption": {
+      "description": "A declared option of a choices block.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ]
+    },
+    "UiColumn": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/UiColumnFormat"
+        },
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Inside a row.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Labels for enumerated cell values (`0..=32`), translated through `texts`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "path"
+      ]
+    },
+    "UiColumnFormat": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "text"
+          ]
+        },
+        {
+          "description": "Epoch milliseconds; the host formats it.",
+          "type": "string",
+          "const": "time"
+        }
+      ]
+    },
+    "UiCondition": {
+      "description": "A data-only test on the data the document is resolved against (for a row\naction, on the row). No expressions: a value list, the viewer, presence, or\nall of a few such tests. Exactly one of `anyOf`, `viewer`, `exists` and\n`allOf` is given.",
+      "type": "object",
+      "properties": {
+        "allOf": {
+          "description": "Matches when every one of these conditions matches (`1..=4`, each with\nits own `path`). One level only: they may not hold `allOf` themselves.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiCondition"
+          }
+        },
+        "anyOf": {
+          "description": "Matches when the value (text, number or bool) is one of these.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exists": {
+          "description": "Matches when the value is present and not empty (null, \"\", [] and {}\nare empty; false and 0 are present).",
+          "type": "boolean"
+        },
+        "negate": {
+          "description": "Inverts the match. For `anyOf` and `viewer` a missing value never\nmatches either way, so older payloads without the path keep the action;\na negated `exists` matches a missing value; a negated `allOf` matches\nwhen not every condition matches (each still follows its own rules).",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "The value `anyOf`, `viewer` and `exists` test; required with them and\nabsent with `allOf`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "viewer": {
+          "description": "Matches when the viewer is the value, or an element of an array value.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiContribution": {
+      "type": "object",
+      "properties": {
+        "audience": {
+          "description": "composer-action only: who sees the entry. Presentation only; the\nplugin still authorizes every invocation.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAudience"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "availability": {
+          "description": "composer-action only: a `query` whose result says whether the entry\ncan be used now (see [`crate::ui::UiEntryAvailability`]). Without it\nthe entry is always listed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiEntryAvailability"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "description": "message-content only: the \"view all\" document and the operation that\nreturns its data.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entityLifecycle": {
+          "description": "message-content only, with `entityPath`: the operation Core calls\nwith a platform system ticket when the card bound to an entity goes\naway (see [`UiEntityLifecycle`]). A card with `entityPath` and no\n`unbound` operation is valid; [`PluginManifest::warnings`] reports it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiEntityLifecycle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entityPath": {
+          "description": "message-content only: JSON pointer into the card payload whose value\n(string or integer) is the plugin entity id, e.g. `/pollId`. Core binds\n`(tenant, pluginId, entity)` to the message when it is stored, which is\nwhat lets the plugin publish [`crate::state::SharedState`] for it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "forwardable": {
+          "description": "message-content only: whether hosts offer \"forward\" on this card\n(default false: plugin cards are bound to their conversation).",
+          "type": "boolean"
+        },
+        "icon": {
+          "description": "Name in the design kit's icon registry. Presentation only: a kit that\ndoes not know the name shows its generic plugin icon.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/UiContributionKind"
+        },
+        "order": {
+          "description": "Ascending position among entries of the same kind (default 1000). Hosts\nlist plugin entries after their built-in ones; ties sort by title.",
+          "type": "integer",
+          "format": "int32",
+          "default": 1000
+        },
+        "requiredPermissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "schema": {
+          "$ref": "#/$defs/UiDocument"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "source": {
+          "description": "page only: the `query` operation whose result the page document is\nresolved against, its input bound from the page arguments, and its\npaging (see [`crate::ui::UiPageSource`]).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiPageSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "description": "account-entry only: a scalar read from a `query` operation result and\nshown as the entry's subtitle (a wallet balance). Hosts call it on\ndemand; listing entries never calls it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiEntrySummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "viewerState": {
+          "description": "message-content only: the viewer's own layer of the card, read in the\nbackground by the core SDK while the card is presented (see\n[`crate::ui::UiViewerState`]). Its operation must be a declared\n`query`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiViewerState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "schemaVersion",
+        "schema",
+        "requiredPermissions"
+      ]
+    },
+    "UiContributionKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "message-content",
+            "message-action",
+            "conversation-menu",
+            "composer-action",
+            "page"
+          ]
+        },
+        {
+          "description": "An entry of the \"Me\" (account) screen, such as a wallet: its title,\ntranslations and target come from its document, which holds no fields,\nblocks or inputs and exactly one action targeting a `page`\ncontribution of the same plugin. `icon` and `order` place it; an\noptional `summary` names a `query` whose result gives a subtitle.",
+          "type": "string",
+          "const": "account-entry"
+        }
+      ]
+    },
+    "UiConversationType": {
+      "type": "string",
+      "enum": [
+        "single",
+        "group"
+      ]
+    },
+    "UiDetail": {
+      "description": "The \"view all\" document of a message-content contribution or of an admin\npage (`admin.pages`).\nThe host invokes `operation` with `input` bound from the card data (or, on\nan admin page, from the row), then resolves `document` against the result\n`data` and shows it in a sheet. A detail document has no rows block and no\ndetail of its own.\n\nPaging (`cursorPath`): the first page is requested with the bound input\nalone; the resolved view carries the cursor of the next page as\n`nextCursor`, and the host requests that page with the same input plus\n`cursor` ([`Self::page_input`]), resolves it against the same document and\nappends it ([`ResolvedPluginView::append_page`]). No `nextCursor` means\nthe last page.",
+      "type": "object",
+      "properties": {
+        "cursorPath": {
+          "description": "The cursor of the next page in the detail result: a non-blank scalar of\nat most 256 bytes without control characters; anything else, or no\nvalue, ends paging. When set, `input` may not bind `cursor`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "document": {
+          "$ref": "#/$defs/UiDocument"
+        },
+        "hiddenWhen": {
+          "description": "The detail is not offered while any condition matches (`0..=4`), read\non the data the contribution's document is resolved against: the\nmerged card data, or an admin page's source result (not a row). The\nresolved view then has `detail: false`, entries blocks report no\n`more` (as without a detail), and rows carry no `detailInput`.\nPresentation only: the detail operation still authorizes every call.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiCondition"
+          }
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "operation": {
+          "description": "Wire operation declared by the plugin.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "document"
+      ]
+    },
+    "UiDocument": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiAction"
+          }
+        },
+        "blocks": {
+          "description": "Display blocks, in order (`0..=24`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiBlock"
+          }
+        },
+        "fields": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiField"
+          }
+        },
+        "inputs": {
+          "description": "Form inputs referenced by action forms, and the filters of the rows\nblock of a page or an admin page (`admin.pages`): its `filters`, or\nevery input when it lists none (`0..=16`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiInput"
+          }
+        },
+        "presentation": {
+          "description": "Optional compiled-in design-kit renderer. Contains inert display data\nand references to this document's actions, never executable code.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiPresentation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "translations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/UiTranslation"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "UiEntityLifecycle": {
+      "description": "What Core tells a plugin about the card bound to one of its entities.\n\nCore invokes `unbound` with a platform system ticket (its own call domain,\nverified by the plugin host; never a user ticket) and the input\n`{entity, reason, serverMsgId?}`, `reason` one of\n[`UNBOUND_REASON_RECALLED`] (the bound card was recalled) and\n[`UNBOUND_REASON_POST_FAILED`] (the platform could not post the card).\nDelivery is at least once: plugins handle it idempotently per entity (a\npoll is cancelled, a red packet refunded at once).",
+      "type": "object",
+      "properties": {
+        "unbound": {
+          "description": "Wire operation declared by the plugin.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "unbound"
+      ]
+    },
+    "UiEntryAvailability": {
+      "description": "Whether a composer entry can be used now, as the plugin service says: the\nboolean at `path` in the result of `operation` (a declared `query` taking\nno input). For an entry whose capability depends on the deployment, such\nas payments that need an identity service. Hosts list the entry only when\nthat value is `true`; a failed, slow or malformed answer hides it.\nPresentation only: the plugin still refuses the invocation itself.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "path"
+      ]
+    },
+    "UiEntrySummary": {
+      "description": "The subtitle of an account entry: the scalar at `path` in the result of\n`operation` (a declared `query` taking no input), such as a balance text.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "path"
+      ]
+    },
+    "UiField": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "values": {
+          "description": "Display labels for enumerated values (a status shown as words, not as its wire value).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "path"
+      ]
+    },
+    "UiGroupRole": {
+      "type": "string",
+      "enum": [
+        "owner",
+        "admin",
+        "member"
+      ]
+    },
+    "UiInput": {
+      "description": "A form input. Fields that do not apply to `kind` are rejected.",
+      "type": "object",
+      "properties": {
+        "choices": {
+          "description": "select only: `1..=1024` choices.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiInputChoice"
+          }
+        },
+        "choicesPath": {
+          "description": "Read bounded select choices from the authenticated source projection.\nRemoved before rendering; every host consumes the same resolved list.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "description": "Initial value of the input's type; options may hold empty placeholder\nitems. Not allowed on members."
+        },
+        "defaultPath": {
+          "description": "Initial value read from the card data instead (for editing an existing\nentry); falls back to `default` when absent or of the wrong type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The key of the value in the action input: `[A-Za-z0-9_]{1,64}`, unique\nin the document.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/UiInputKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "max": {
+          "description": "number: largest value. options (`<= 50`), members (`<= 500`): most items.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxLength": {
+          "description": "Characters: text (`1..=1024`, default 256), textarea (`1..=8000`,\ndefault 2000), options per item (`1..=256`, default 100).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxPath": {
+          "description": "options and members only: the most items read from the data the\ndocument is resolved against instead (a composer form's\n`/config/<key>`). When it holds a positive integer the resolved input's\n`max` is that integer, capped at 50 or 500; it keeps the declared `max`\nwhen the value is absent, not such an integer, or would make the input\ninvalid (below `min`, or below the item count of `default`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "min": {
+          "description": "number: smallest value. options, members: fewest items (integer).",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required": {
+          "description": "A value is required: non-blank text, at least one item.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "label"
+      ]
+    },
+    "UiInputChoice": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "description": "`1..=128` bytes, unique within the input.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "label"
+      ]
+    },
+    "UiInputKind": {
+      "oneOf": [
+        {
+          "description": "One line of text; value is a string.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "Multi-line text; value is a string (newlines allowed).",
+          "type": "string",
+          "const": "textarea"
+        },
+        {
+          "description": "Value is a JSON number within `min..=max`.",
+          "type": "string",
+          "const": "number"
+        },
+        {
+          "description": "Value is a boolean; never `required`.",
+          "type": "string",
+          "const": "toggle"
+        },
+        {
+          "description": "Value is the `value` of one of `choices`.",
+          "type": "string",
+          "const": "select"
+        },
+        {
+          "description": "Value is an instant in epoch milliseconds (integer); the host picks it\nin the viewer's time zone.",
+          "type": "string",
+          "const": "datetime"
+        },
+        {
+          "description": "An editable list of option texts; value is an array of strings, item\ncount within `min..=max`, each item non-empty and unique.",
+          "type": "string",
+          "const": "options"
+        },
+        {
+          "description": "Conversation members picked from the list the host provides; value is\nan array of user ids, count within `min..=max`. `max: 1` is a single pick.",
+          "type": "string",
+          "const": "members"
+        }
+      ]
+    },
+    "UiPageCommand": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/UiPageCommandMode",
+          "default": "submit"
+        },
+        "slot": {
+          "type": "string"
+        },
+        "terminalErrorCodes": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "slot"
+      ]
+    },
+    "UiPageCommandMode": {
+      "type": "string",
+      "enum": [
+        "submit",
+        "retry",
+        "acknowledge"
+      ]
+    },
+    "UiPageSource": {
+      "description": "The data a `page` contribution is resolved against: the result `data` of\na declared `query` operation. A page is opened with arguments, the input\nthe opening action bound (a page target's payload; `{}` from an account\nentry). `input` names operation inputs and the JSON pointers into those\narguments they are read from; one whose pointer finds nothing is left\nout, so an argument is optional.\n\nPaging follows the detail convention ([`UiDetail`]): with `cursorPath`\nthe resolved page carries `nextCursor`, the next page is requested with\nthe same input plus `cursor` ([`Self::page_input`]) and appended with\n[`ResolvedPluginView::append_page`]. A page without a source resolves\nagainst its arguments.",
+      "type": "object",
+      "properties": {
+        "commandSlot": {
+          "description": "SDK-local journal projection, merged under `journal` after the source\nquery. Scoped to the signed-in tenant/user; never supplied by a server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursorPath": {
+          "description": "The cursor of the next page in the result, as for a detail. When set,\n`input` may not bind `cursor`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "operation": {
+          "description": "Wire operation declared by the plugin with `mode: \"query\"`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation"
+      ]
+    },
+    "UiPageTransition": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "page": {
+          "type": "string"
+        },
+        "pluginId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiCondition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "page"
+      ]
+    },
+    "UiPeopleGroup": {
+      "type": "object",
+      "properties": {
+        "countPath": {
+          "description": "The group size when the data lists only some of its users; the length\nof the users array otherwise. At least one of the two paths is set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "tone": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiTone"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usersPath": {
+          "description": "Array of user ids; the host resolves avatars.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ]
+    },
+    "UiPresentation": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "renderer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "renderer"
+      ]
+    },
+    "UiShowResults": {
+      "description": "When a choices block shows counts.",
+      "oneOf": [
+        {
+          "description": "Always (a public poll).",
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "description": "Once the viewer has chosen, or once closed.",
+          "type": "string",
+          "const": "voted"
+        },
+        {
+          "description": "Only once closed.",
+          "type": "string",
+          "const": "closed"
+        }
+      ]
+    },
+    "UiStatusValue": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/UiTone"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ]
+    },
+    "UiTextStyle": {
+      "type": "string",
+      "enum": [
+        "body",
+        "title",
+        "secondary"
+      ]
+    },
+    "UiTone": {
+      "description": "Semantic color of a badge, note or people group; kits map it to tokens.",
+      "type": "string",
+      "enum": [
+        "neutral",
+        "info",
+        "success",
+        "warning",
+        "danger"
+      ]
+    },
+    "UiTranslation": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "fields": {
+          "description": "One label per document field, in order (empty when the document has\nno fields).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "texts": {
+          "description": "Every other text of the document, keyed by its source text: block\nlabels and literals, value labels of blocks and columns, input labels,\nplaceholders and choices, action confirmations. A text without an entry\nis shown as declared.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "values": {
+          "description": "Display labels for enumerated field values, keyed by field path.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "UiValueLabels": {
+      "description": "Labels for an enumerated value inside each entry or row, shown as that\nitem's badge: the scalar at `path` (inside the item) mapped to a label,\ntranslated through `texts`, and a tone. An unmapped value is shown as\nsent, neutral, as in a status block; an item without a value has no\nbadge. `1..=32` values, keys `1..=64` bytes.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/UiStatusValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "values"
+      ]
+    },
+    "UiViewerRefresh": {
+      "description": "When the core SDK reads a card's [`UiViewerState`].",
+      "oneOf": [
+        {
+          "description": "Presenting the card reads it when the viewer layer is missing or stale\n(computed from an older shared version).",
+          "type": "string",
+          "const": "present"
+        },
+        {
+          "description": "A newer shared version of a card presented recently reads it again,\nwithout waiting for the host to present the card.",
+          "type": "string",
+          "const": "sharedVersion"
+        }
+      ]
+    },
+    "UiViewerState": {
+      "description": "The viewer's own layer of a message-content card: what only this viewer\nmay see or do (`hasVoted`, `canClose`, counts visible to them alone). The\ncore SDK schedules it; hosts and kits write no call logic.\n\nThe SDK calls `operation` (a declared `query`) with `input` bound from the\ncard payload under its shared layer (never the local layer, so the result\nnever feeds its own request), when [`refreshOn`](Self::refresh_on) says\nso, at most once per `minIntervalMs` per card, one call in flight per\ncard, with exponential backoff after failures, only for presented cards,\nand never across a session change. The result `data` (an object) is\noverlaid on the card's local layer (top-level keys, null removes one) and\nstored with [`PluginMessageState::based_on_version`] taken from the\nresult's `basedOnVersion` (a non-negative integer, at most the shared\nversion seen when the call was made) or else that seen version. A result\nmay also carry `refreshOn`\nto narrow the triggers for that card ([`Self::result_refresh_on`]); the\nkeys `basedOnVersion` and `refreshOn` are not stored as values.",
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "Input names to JSON pointers into the card data (`0..=32`).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "minIntervalMs": {
+          "description": "Calls per card at most once per this many milliseconds\n(`1000..=3600000`).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "operation": {
+          "description": "Wire operation declared by the plugin, mode `query`.",
+          "type": "string"
+        },
+        "refreshOn": {
+          "description": "`1..=2` distinct triggers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiViewerRefresh"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "refreshOn",
+        "minIntervalMs"
+      ]
+    },
+    "UninstallBehavior": {
+      "type": "string",
+      "enum": [
+        "retain",
+        "export-then-retain",
+        "delete-by-request"
+      ]
+    }
+  }
+}
