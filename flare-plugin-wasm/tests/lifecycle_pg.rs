@@ -118,6 +118,7 @@ impl Fixture {
     fn state(&self, tenant: &str, revision: u64, enabled: bool) -> PluginTenantState {
         let configuration = json!({"tenantSetting":tenant});
         PluginTenantState {
+            organization_id: "org-1".into(),
             deployment_id: "wasm-1".into(),
             app_id: tenant.into(),
             grant_id: format!("grant-{tenant}"),
@@ -128,6 +129,9 @@ impl Fixture {
             enabled,
             valid_until_ms: now() + 60000,
             validate_configuration: true,
+            approved_operations: Vec::new(),
+            permissions: Vec::new(),
+            data_scopes: Vec::new(),
         }
     }
     fn control(&self, state: PluginTenantState) -> Request<PluginTenantState> {
@@ -137,7 +141,7 @@ impl Fixture {
                 "flare-platform-worker",
                 Some(&state.app_id),
                 "control",
-                "flare-plugin-runtime:wasm-1",
+                "flare-plugin-runtime:wasm-1:org-1",
             )
             .unwrap();
         let mut request = Request::new(state);

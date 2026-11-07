@@ -63,6 +63,7 @@ struct Inner {
     /// The staff permission code each admin operation needs
     /// ([`PluginManifest::admin_permission_for`](flare_plugin_protocol::PluginManifest::admin_permission_for)).
     admin_permissions: BTreeMap<String, String>,
+    organization_operations: BTreeSet<String>,
     /// Admin operations declaring `requiresReason`: their staff ticket must
     /// carry the operator's stated reason.
     reason_required: BTreeSet<String>,
@@ -72,6 +73,18 @@ struct Inner {
     runtime_signer: Option<PluginRuntimeSigner>,
     /// Platform protocols the binary serves besides its operations, reported by `Inspect`.
     protocols: Vec<String>,
+}
+
+/// A read admitted against the existing current tenant installation. Retain this
+/// guard until the authoritative read has finished so shutdown waits for it.
+pub struct WorkloadReadAdmission {
+    pub app_id: String,
+    pub organization_id: Option<String>,
+    pub grant_id: String,
+    pub grant_revision: u64,
+    pub configuration: Value,
+    pub valid_until_ms: i64,
+    _work: super::RuntimeWork,
 }
 
 /// One host write, signed with this deployment's runtime credential for the
@@ -278,6 +291,20 @@ impl PluginRuntimeHost {
                     .map(|code| (operation.clone(), code))
             })
             .collect();
+        let organization_operations = manifest
+            .manifest()
+            .admin
+            .as_ref()
+            .map(|a| {
+                a.operations
+                    .iter()
+                    .filter(|op| {
+                        op.scope == flare_plugin_protocol::admin::AdminOperationScope::Organization
+                    })
+                    .map(|op| op.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
         let reason_required = manifest
             .manifest()
             .admin
@@ -301,6 +328,7 @@ impl PluginRuntimeHost {
         Ok(Self(Arc::new(Inner {
             admin_operations,
             admin_permissions,
+            organization_operations,
             reason_required,
             lifecycle_operations,
             runtime_signer: None,
@@ -540,6 +568,77 @@ impl PluginRuntimeHost {
         Ok(data)
     }
 
+    /// Admit an independently authenticated workload read against the same
+    /// current installation used by plugin invocation. The workload cannot pick
+    /// a historical grant or supply its own revision/configuration. Callers must
+    /// authenticate their source, request scope and read operation first.
+    pub async fn admit_workload_read(
+        &self,
+        app: &str,
+        operation: &str,
+    ) -> Result<WorkloadReadAdmission, Status> {
+        let work = self.admit_work()?;
+        let declared = self
+            .0
+            .manifest
+            .manifest()
+            .operation(operation)
+            .ok_or_else(denied)?;
+        let now = now_ms();
+        let state = self
+            .0
+            .states
+            .current(&self.0.deployment.deployment_id, app, now, false)
+            .await?
+            .ok_or_else(denied)?;
+        if state.app_id != app
+            || state.deployment_id != self.0.deployment.deployment_id
+            || state.manifest_digest != self.0.deployment.manifest_digest
+            || !state.enabled
+            || state.revision == 0
+            || state.valid_until_ms <= now
+            || !state
+                .approved_operations
+                .iter()
+                .any(|approved| approved == operation)
+            || !declared
+                .permission_ids
+                .iter()
+                .all(|permission| state.permissions.contains(permission))
+            || self
+                .0
+                .manifest
+                .manifest()
+                .permissions
+                .iter()
+                .filter(|permission| declared.permission_ids.contains(&permission.id))
+                .any(|permission| {
+                    permission
+                        .data_scopes
+                        .iter()
+                        .any(|scope| !state.data_scopes.contains(scope))
+                })
+        {
+            return Err(denied());
+        }
+        let configuration: Value =
+            serde_json::from_slice(&state.configuration_json).map_err(|_| denied())?;
+        if configuration_digest(&configuration).map_err(|_| denied())? != state.configuration_digest
+        {
+            return Err(denied());
+        }
+        Ok(WorkloadReadAdmission {
+            organization_id: (!state.organization_id.is_empty())
+                .then(|| state.organization_id.clone()),
+            app_id: state.app_id,
+            grant_id: state.grant_id,
+            grant_revision: state.revision,
+            configuration,
+            valid_until_ms: state.valid_until_ms,
+            _work: work,
+        })
+    }
+
     pub async fn configuration(&self, tenant: &str, grant: &str) -> Result<Value, Status> {
         let state = self
             .0
@@ -632,6 +731,8 @@ impl PluginRuntimeHost {
             return Err(projection_stale());
         }
         Ok(VerifiedPluginUser {
+            organization_id: (!state.organization_id.is_empty())
+                .then(|| state.organization_id.clone()),
             tenant_id: claims.tenant_id,
             user_id: claims.actor_id,
             request_id: claims.request_id,
@@ -716,6 +817,8 @@ impl PluginRuntimeHost {
             return Err(projection_stale());
         }
         Ok(crate::service::VerifiedPluginService {
+            organization_id: (!state.organization_id.is_empty())
+                .then(|| state.organization_id.clone()),
             claims,
             _admission: work,
         })
@@ -782,7 +885,19 @@ impl PluginRuntimeHost {
         {
             return Err(projection_stale());
         }
+        let organization_call = claims.scope.organization_id();
+        if self.0.organization_operations.contains(&claims.operation) != organization_call.is_some()
+            || organization_call.is_some_and(|org| state.organization_id != org)
+            || claims.org_id.as_deref().is_some_and(|org| {
+                !state.organization_id.is_empty() && org != state.organization_id
+            })
+        {
+            return Err(denied());
+        }
         Ok(VerifiedPluginStaff {
+            organization_id: (!state.organization_id.is_empty())
+                .then(|| state.organization_id.clone()),
+            scope: claims.scope,
             tenant_id: claims.tenant_id,
             staff_id: claims.staff_id,
             org_id: claims.org_id,
@@ -902,7 +1017,11 @@ impl PluginRuntimeHost {
         if values.next().is_some() {
             return Err(Status::unauthenticated("one worker assertion required"));
         }
-        let audience = format!("flare-plugin-runtime:{}", self.0.deployment.deployment_id);
+        let audience = format!(
+            "flare-plugin-runtime:{}:{}",
+            self.0.deployment.deployment_id,
+            request.get_ref().organization_id
+        );
         let claims = self
             .0
             .control
@@ -951,7 +1070,13 @@ impl PluginRuntime for PluginRuntimeHost {
         self.authenticate(&request)?;
         let state = request.into_inner();
         let now = now_ms();
-        if state.app_id.is_empty()
+        if state.organization_id.is_empty()
+            || state.organization_id.len() > 128
+            || !state
+                .organization_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+            || state.app_id.is_empty()
             || state.app_id.len() > 32
             || !state
                 .app_id

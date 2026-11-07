@@ -74,6 +74,7 @@ fn fixture_with_store(
 }
 fn state(host: &PluginRuntimeHost, revision: u64, enabled: bool) -> PluginTenantState {
     PluginTenantState {
+        organization_id: "org-1".into(),
         deployment_id: "echo-1".into(),
         app_id: "201".into(),
         grant_id: "grant-1".into(),
@@ -84,6 +85,9 @@ fn state(host: &PluginRuntimeHost, revision: u64, enabled: bool) -> PluginTenant
         enabled,
         valid_until_ms: now_ms() + 300000,
         validate_configuration: true,
+        approved_operations: Vec::new(),
+        permissions: Vec::new(),
+        data_scopes: Vec::new(),
     }
 }
 fn assertion(
@@ -107,7 +111,7 @@ fn signed(issuer: &TokenService, state: PluginTenantState) -> Request<PluginTena
         state,
         "201",
         "flare-platform-worker",
-        "flare-plugin-runtime:echo-1",
+        "flare-plugin-runtime:echo-1:org-1",
     )
 }
 
@@ -293,9 +297,9 @@ async fn runtime_rejects_wrong_principal_audience_tenant_and_digest() {
         (
             "202",
             "flare-platform-worker",
-            "flare-plugin-runtime:echo-1",
+            "flare-plugin-runtime:echo-1:org-1",
         ),
-        ("201", "employee", "flare-plugin-runtime:echo-1"),
+        ("201", "employee", "flare-plugin-runtime:echo-1:org-1"),
         ("201", "flare-platform-worker", "flare-core-projection"),
     ] {
         assert!(
@@ -608,7 +612,7 @@ async fn data_tickets_bind_purpose_body_grant_and_revision() {
             "flare-platform-worker",
             Some("201"),
             "control",
-            "flare-plugin-runtime:echo-1",
+            "flare-plugin-runtime:echo-1:org-1",
         )
         .unwrap();
     assert!(

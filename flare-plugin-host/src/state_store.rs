@@ -35,6 +35,33 @@ pub struct PostgresTenantStateStore(PgPool);
 fn unavailable(_: sqlx::Error) -> Status {
     Status::unavailable("runtime persistence unavailable")
 }
+fn validate_workload_projection(state: &PluginTenantState) -> Result<(), Status> {
+    for values in [
+        &state.approved_operations,
+        &state.permissions,
+        &state.data_scopes,
+    ] {
+        if values.len() > 512
+            || values.iter().any(|id| {
+                id.is_empty()
+                    || id.len() > 256
+                    || !id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+            })
+            || values
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != values.len()
+        {
+            return Err(Status::invalid_argument(
+                "invalid workload authorization projection",
+            ));
+        }
+    }
+    Ok(())
+}
 impl PostgresTenantStateStore {
     pub fn new(pool: PgPool) -> Self {
         Self(pool)
@@ -63,7 +90,7 @@ impl PostgresTenantStateStore {
     }
 }
 async fn check_schema(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT deployment_id, app_id, grant_id, revision, manifest_digest, configuration_json, configuration_digest, enabled, valid_until_ms FROM plugin_runtime_tenants LIMIT 0")
+    sqlx::query("SELECT deployment_id, app_id, organization_id, grant_id, revision, manifest_digest, configuration_json, configuration_digest, enabled, valid_until_ms, approved_operations, permissions, data_scopes FROM plugin_runtime_tenants LIMIT 0")
         .execute(pool).await.map(|_|())
 }
 #[tonic::async_trait]
@@ -78,6 +105,7 @@ impl TenantStateStore for PostgresTenantStateStore {
             .bind(deployment).bind(app).bind(grant).fetch_optional(&self.0).await.map_err(unavailable)?;
         row.map(|row| {
             Ok(PluginTenantState {
+                organization_id: row.try_get("organization_id").map_err(unavailable)?,
                 deployment_id: row.try_get("deployment_id").map_err(unavailable)?,
                 app_id: row.try_get("app_id").map_err(unavailable)?,
                 grant_id: row.try_get("grant_id").map_err(unavailable)?,
@@ -88,6 +116,9 @@ impl TenantStateStore for PostgresTenantStateStore {
                 enabled: row.try_get("enabled").map_err(unavailable)?,
                 valid_until_ms: row.try_get("valid_until_ms").map_err(unavailable)?,
                 validate_configuration: false,
+                approved_operations: row.try_get("approved_operations").map_err(unavailable)?,
+                permissions: row.try_get("permissions").map_err(unavailable)?,
+                data_scopes: row.try_get("data_scopes").map_err(unavailable)?,
             })
         })
         .transpose()
@@ -114,15 +145,32 @@ impl TenantStateStore for PostgresTenantStateStore {
         self.get(deployment, app, grant).await
     }
     async fn apply(&self, s: PluginTenantState) -> Result<(), Status> {
-        let updated = sqlx::query("INSERT INTO plugin_runtime_tenants AS old (deployment_id,app_id,grant_id,revision,manifest_digest,configuration_json,configuration_digest,enabled,valid_until_ms) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (deployment_id,app_id,grant_id) DO UPDATE SET revision=excluded.revision,manifest_digest=excluded.manifest_digest,configuration_json=excluded.configuration_json,configuration_digest=excluded.configuration_digest,enabled=excluded.enabled,valid_until_ms=CASE WHEN old.revision=excluded.revision THEN GREATEST(old.valid_until_ms,excluded.valid_until_ms) ELSE excluded.valid_until_ms END WHERE old.revision<excluded.revision OR (old.revision=excluded.revision AND old.manifest_digest=excluded.manifest_digest AND old.configuration_digest=excluded.configuration_digest AND old.enabled=excluded.enabled)")
+        validate_workload_projection(&s)?;
+        let mut tx = self.0.begin().await.map_err(unavailable)?;
+        let scope = &s.app_id;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 51973))")
+            .bind(scope)
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        let conflicting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM plugin_runtime_tenants WHERE app_id=$1 AND organization_id<>$2)")
+            .bind(&s.app_id).bind(&s.organization_id)
+            .fetch_one(&mut *tx).await.map_err(unavailable)?;
+        if conflicting {
+            return Err(Status::permission_denied("application owner cannot change"));
+        }
+        let updated = sqlx::query("INSERT INTO plugin_runtime_tenants AS old (deployment_id,app_id,grant_id,revision,manifest_digest,configuration_json,configuration_digest,enabled,valid_until_ms,approved_operations,permissions,data_scopes,organization_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (deployment_id,app_id,grant_id) DO UPDATE SET revision=excluded.revision,manifest_digest=excluded.manifest_digest,configuration_json=excluded.configuration_json,configuration_digest=excluded.configuration_digest,enabled=excluded.enabled,valid_until_ms=CASE WHEN old.revision=excluded.revision THEN GREATEST(old.valid_until_ms,excluded.valid_until_ms) ELSE excluded.valid_until_ms END,approved_operations=excluded.approved_operations,permissions=excluded.permissions,data_scopes=excluded.data_scopes WHERE old.organization_id=excluded.organization_id AND (old.revision<excluded.revision OR (old.revision=excluded.revision AND old.manifest_digest=excluded.manifest_digest AND old.configuration_digest=excluded.configuration_digest AND old.enabled=excluded.enabled AND old.approved_operations=excluded.approved_operations AND old.permissions=excluded.permissions AND old.data_scopes=excluded.data_scopes))")
             .bind(&s.deployment_id).bind(&s.app_id).bind(&s.grant_id).bind(s.revision as i64)
             .bind(&s.manifest_digest).bind(&s.configuration_json).bind(&s.configuration_digest)
-            .bind(s.enabled).bind(s.valid_until_ms).execute(&self.0).await.map_err(unavailable)?;
+            .bind(s.enabled).bind(s.valid_until_ms)
+            .bind(&s.approved_operations).bind(&s.permissions).bind(&s.data_scopes).bind(&s.organization_id)
+            .execute(&mut *tx).await.map_err(unavailable)?;
         if updated.rows_affected() != 1 {
             return Err(Status::failed_precondition(
                 "stale or conflicting runtime revision",
             ));
         }
+        tx.commit().await.map_err(unavailable)?;
         Ok(())
     }
     async fn healthy(&self) -> Result<(), Status> {
@@ -182,18 +230,29 @@ impl TenantStateStore for MemoryStore {
         Ok(chosen.first().map(|s| (*s).clone()))
     }
     async fn apply(&self, s: PluginTenantState) -> Result<(), Status> {
+        validate_workload_projection(&s)?;
         let mut rows = self.0.write().unwrap();
+        if rows
+            .values()
+            .any(|old| old.app_id == s.app_id && old.organization_id != s.organization_id)
+        {
+            return Err(Status::permission_denied("application owner cannot change"));
+        }
         let key = (
             s.deployment_id.clone(),
             s.app_id.clone(),
             s.grant_id.clone(),
         );
         if let Some(old) = rows.get(&key)
-            && (old.revision > s.revision
+            && (old.organization_id != s.organization_id
+                || old.revision > s.revision
                 || (old.revision == s.revision
                     && (old.configuration_digest != s.configuration_digest
                         || old.enabled != s.enabled
-                        || old.manifest_digest != s.manifest_digest)))
+                        || old.manifest_digest != s.manifest_digest
+                        || old.approved_operations != s.approved_operations
+                        || old.permissions != s.permissions
+                        || old.data_scopes != s.data_scopes)))
         {
             return Err(Status::failed_precondition(
                 "stale or conflicting runtime revision",
@@ -204,5 +263,88 @@ impl TenantStateStore for MemoryStore {
     }
     async fn healthy(&self) -> Result<(), Status> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod workload_projection_tests {
+    use super::*;
+    use crate::runtime::status_fixture::{host_with_store, tenant};
+
+    #[tokio::test]
+    async fn application_owner_cannot_change_even_for_a_new_grant() {
+        let (host, store) = host_with_store();
+        let state = tenant(&host, 1, true);
+        store.apply(state.clone()).await.unwrap();
+        let mut forged = state.clone();
+        forged.organization_id = "other-org".into();
+        forged.revision += 1;
+        assert_eq!(
+            store.apply(forged.clone()).await.unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
+        forged.grant_id = "new-grant".into();
+        assert_eq!(
+            store.apply(forged.clone()).await.unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
+        forged.deployment_id = "new-deployment".into();
+        assert_eq!(
+            store.apply(forged).await.unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
+        assert_eq!(
+            store
+                .get(&state.deployment_id, &state.app_id, &state.grant_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .organization_id,
+            state.organization_id
+        );
+    }
+
+    #[tokio::test]
+    async fn workload_authorization_changes_require_a_new_revision() {
+        let (host, store) = host_with_store();
+        let mut state = tenant(&host, 1, true);
+        state.approved_operations = vec!["example.echo.run".into()];
+        state.permissions = vec!["example.echo.read".into()];
+        state.data_scopes = vec!["example.self".into()];
+        store.apply(state.clone()).await.unwrap();
+        let mut changed = state.clone();
+        changed.permissions.push("example.echo.write".into());
+        assert_eq!(
+            store.apply(changed.clone()).await.unwrap_err().code(),
+            tonic::Code::FailedPrecondition
+        );
+        changed.revision += 1;
+        store.apply(changed.clone()).await.unwrap();
+        assert_eq!(
+            store
+                .get("echo-1", "201", "grant-1")
+                .await
+                .unwrap()
+                .unwrap()
+                .permissions,
+            changed.permissions
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_and_duplicate_workload_scopes_are_rejected() {
+        let (host, store) = host_with_store();
+        let mut state = tenant(&host, 1, true);
+        state.permissions = vec!["scope".into(), "scope".into()];
+        assert_eq!(
+            store.apply(state).await.unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+        let mut state = tenant(&host, 1, true);
+        state.data_scopes = vec!["../other-tenant".into()];
+        assert_eq!(
+            store.apply(state).await.unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
     }
 }

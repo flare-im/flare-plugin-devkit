@@ -8,6 +8,7 @@ use tonic::{Request, Status};
 #[derive(Clone)]
 pub struct VerifiedPluginUser {
     pub tenant_id: String,
+    pub organization_id: Option<String>,
     pub user_id: String,
     pub request_id: String,
     pub grant_id: String,
@@ -44,6 +45,9 @@ impl std::fmt::Debug for VerifiedPluginUser {
 #[derive(Clone)]
 pub struct VerifiedPluginStaff {
     pub tenant_id: String,
+    /// Immutable owner of the application, independently projected by Catalog.
+    pub organization_id: Option<String>,
+    pub scope: crate::protocol::invocation::PluginAdminScope,
     pub staff_id: String,
     /// The staff member's organization; `None` for platform staff.
     pub org_id: Option<String>,

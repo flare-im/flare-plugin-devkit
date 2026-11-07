@@ -119,6 +119,7 @@ fn fixture() -> Fixture {
 impl Fixture {
     async fn enable(&self, revision: u64, enabled: bool) {
         let state = PluginTenantState {
+            organization_id: "org-1".into(),
             deployment_id: "life-1".into(),
             app_id: "201".into(),
             grant_id: "grant-1".into(),
@@ -129,6 +130,9 @@ impl Fixture {
             enabled,
             valid_until_ms: now_ms() + 300000,
             validate_configuration: true,
+            approved_operations: Vec::new(),
+            permissions: Vec::new(),
+            data_scopes: Vec::new(),
         };
         let token = self
             .issuer
@@ -136,7 +140,7 @@ impl Fixture {
                 "flare-platform-worker",
                 Some("201"),
                 "control",
-                "flare-plugin-runtime:life-1",
+                "flare-plugin-runtime:life-1:org-1",
             )
             .unwrap();
         let mut request = Request::new(state);
@@ -220,6 +224,7 @@ impl Fixture {
     fn staff(&self, operation: &str, input: &Value) -> Request<GenericRequest> {
         let now = now_ms();
         let claims = PluginStaffCallClaims {
+            scope: Default::default(),
             tenant_id: "201".into(),
             plugin_id: PLUGIN.into(),
             plugin_version: "1.0.0".into(),

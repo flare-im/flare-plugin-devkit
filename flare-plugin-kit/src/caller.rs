@@ -2,6 +2,7 @@
 //! (staff ticket). Each retains its process admission until dropped, and a
 //! user caller is also the delegation for host resource reads.
 use crate::KitError;
+pub use flare_plugin_host::protocol::invocation::PluginAdminScope;
 use flare_plugin_host::{VerifiedPluginStaff, VerifiedPluginUser};
 use serde_json::Value;
 
@@ -12,6 +13,7 @@ fn valid_actor(id: &str) -> bool {
 /// A conversation member's admitted call.
 pub struct UserCaller {
     tenant: String,
+    organization_id: Option<String>,
     user: String,
     request_id: String,
     grant_id: String,
@@ -28,6 +30,7 @@ impl UserCaller {
         }
         Ok(Self {
             tenant: identity.tenant_id.clone(),
+            organization_id: identity.organization_id.clone(),
             user: identity.user_id.clone(),
             request_id: identity.request_id.clone(),
             grant_id: identity.grant_id.clone(),
@@ -48,6 +51,7 @@ impl UserCaller {
     ) -> Self {
         Self {
             tenant: tenant.into(),
+            organization_id: None,
             user: user.into(),
             request_id: request_id.into(),
             grant_id: "grant-1".into(),
@@ -57,9 +61,18 @@ impl UserCaller {
             admission: None,
         }
     }
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_test_organization(mut self, organization: &str) -> Self {
+        self.organization_id = Some(organization.into());
+        self
+    }
     /// Borrow the immutable Host admission for trusted service delegation.
     pub fn invocation(&self) -> Result<&VerifiedPluginUser, KitError> {
         self.admission.as_ref().ok_or(KitError::ResourceUnavailable)
+    }
+    /// Catalog-projected owner of the application, never the employee membership.
+    pub fn organization_id(&self) -> Option<&str> {
+        self.organization_id.as_deref()
     }
     pub fn tenant(&self) -> &str {
         &self.tenant
@@ -89,8 +102,10 @@ impl UserCaller {
 /// conversation, and no host reads on the staff member's behalf.
 pub struct StaffCaller {
     tenant: String,
+    organization_id: Option<String>,
     staff: String,
     org: Option<String>,
+    scope: PluginAdminScope,
     request_id: String,
     reason: Option<String>,
     grant_id: String,
@@ -105,8 +120,10 @@ impl StaffCaller {
         }
         Ok(Self {
             tenant: identity.tenant_id.clone(),
+            organization_id: identity.organization_id.clone(),
             staff: identity.staff_id.clone(),
             org: identity.org_id.clone(),
+            scope: identity.scope.clone(),
             request_id: identity.request_id.clone(),
             reason: identity.reason.clone(),
             grant_id: identity.grant_id.clone(),
@@ -119,8 +136,10 @@ impl StaffCaller {
     pub fn unverified(tenant: &str, staff: &str, request_id: &str) -> Self {
         Self {
             tenant: tenant.into(),
+            organization_id: None,
             staff: staff.into(),
             org: None,
+            scope: PluginAdminScope::Application,
             request_id: request_id.into(),
             reason: None,
             grant_id: "grant-1".into(),
@@ -129,11 +148,21 @@ impl StaffCaller {
             _admission: None,
         }
     }
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_test_scope(mut self, organization: &str, scope: PluginAdminScope) -> Self {
+        self.organization_id = Some(organization.into());
+        self.scope = scope;
+        self
+    }
     /// The same caller under another tenant configuration, for tests.
     #[cfg(any(test, feature = "testing"))]
     pub fn with_configuration(mut self, configuration: Value) -> Self {
         self.configuration = configuration;
         self
+    }
+    /// Catalog-projected owner of the application, never the employee membership.
+    pub fn organization_id(&self) -> Option<&str> {
+        self.organization_id.as_deref()
     }
     pub fn tenant(&self) -> &str {
         &self.tenant
@@ -146,6 +175,12 @@ impl StaffCaller {
     /// command keys use, never one a member id can take.
     pub fn actor(&self) -> String {
         crate::commands::staff_actor(&self.staff)
+    }
+    pub fn admin_scope(&self) -> &PluginAdminScope {
+        &self.scope
+    }
+    pub fn is_organization_scope(&self) -> bool {
+        matches!(self.scope, PluginAdminScope::Organization { .. })
     }
     pub fn org(&self) -> Option<&str> {
         self.org.as_deref()

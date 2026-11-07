@@ -102,6 +102,7 @@ pub(crate) mod fixture {
         enabled: bool,
     ) -> PluginTenantState {
         PluginTenantState {
+            organization_id: "org-1".into(),
             deployment_id: "echo-1".into(),
             app_id: "201".into(),
             grant_id: "grant-1".into(),
@@ -112,6 +113,9 @@ pub(crate) mod fixture {
             enabled,
             valid_until_ms: now_ms() + 60_000,
             validate_configuration: false,
+            approved_operations: Vec::new(),
+            permissions: Vec::new(),
+            data_scopes: Vec::new(),
         }
     }
 }

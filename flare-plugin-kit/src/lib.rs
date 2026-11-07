@@ -32,6 +32,6 @@ pub mod membership;
 pub mod migration;
 pub mod outbox;
 
-pub use caller::{StaffCaller, UserCaller};
+pub use caller::{PluginAdminScope, StaffCaller, UserCaller};
 pub use error::{KitError, Rejection};
 pub use flare_plugin_host as host;

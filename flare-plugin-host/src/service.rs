@@ -323,6 +323,7 @@ pub(crate) fn now_ms() -> i64 {
 /// Opaque validated delegation; only Host can construct one.
 pub struct VerifiedPluginService {
     pub(crate) claims: PluginServiceClaims,
+    pub organization_id: Option<String>,
     pub(crate) _admission: crate::RuntimeWork,
 }
 impl VerifiedPluginService {

@@ -22,6 +22,66 @@ use serde_json::json;
 
 const PLUGIN: &str = "example.admin";
 
+#[tokio::test]
+async fn organization_calls_need_explicit_signed_scope_and_trusted_owner() {
+    use flare_plugin_protocol::invocation::PluginAdminScope;
+    let mut raw: serde_json::Value = serde_json::from_slice(&manifest()).unwrap();
+    raw["admin"]["operations"][0]["scope"] = json!("organization");
+    let f = fixture_with(serde_json::to_vec(&raw).unwrap(), None);
+    f.enable(1, true).await;
+    // An application permission and the staff member's membership do not grant org work.
+    let mut request = f.staff("example.admin.list", 1);
+    assert!(f.host.verify_staff(&request).await.is_err());
+    request
+        .get_mut()
+        .metadata
+        .insert("organization_id".into(), "org-1".into());
+    assert!(f.host.verify_staff(&request).await.is_err());
+    let ticket = request
+        .metadata()
+        .get(PLUGIN_CALL_HEADER)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let mut claims = f.host.0.calls.verify_staff(ticket, now_ms()).unwrap();
+    claims.org_id = None; // Platform staff still needs an explicit target.
+    request.metadata_mut().insert(
+        PLUGIN_CALL_HEADER,
+        f.calls
+            .sign_staff(&claims, now_ms())
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
+    assert!(f.host.verify_staff(&request).await.is_err());
+    claims.scope = PluginAdminScope::Organization {
+        organization_id: "org-1".into(),
+    };
+    request.metadata_mut().insert(
+        PLUGIN_CALL_HEADER,
+        f.calls
+            .sign_staff(&claims, now_ms())
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
+    let verified = f.host.verify_staff(&request).await.unwrap();
+    assert_eq!(verified.organization_id.as_deref(), Some("org-1"));
+    assert_eq!(verified.scope, claims.scope);
+    claims.scope = PluginAdminScope::Organization {
+        organization_id: "org-2".into(),
+    };
+    request.metadata_mut().insert(
+        PLUGIN_CALL_HEADER,
+        f.calls
+            .sign_staff(&claims, now_ms())
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
+    assert!(f.host.verify_staff(&request).await.is_err());
+}
+
 fn manifest() -> Vec<u8> {
     serde_json::to_vec(&json!({
         "manifestVersion": 1, "pluginId": PLUGIN, "version": "1.0.0", "apiVersion": "1.0",
@@ -143,6 +203,7 @@ fn fixture_with(raw: Vec<u8>, runtime_key: Option<[u8; 32]>) -> Fixture {
 impl Fixture {
     async fn enable(&self, revision: u64, enabled: bool) {
         let state = PluginTenantState {
+            organization_id: "org-1".into(),
             deployment_id: "admin-1".into(),
             app_id: "201".into(),
             grant_id: "grant-1".into(),
@@ -153,6 +214,9 @@ impl Fixture {
             enabled,
             valid_until_ms: now_ms() + 300000,
             validate_configuration: true,
+            approved_operations: Vec::new(),
+            permissions: Vec::new(),
+            data_scopes: Vec::new(),
         };
         let token = self
             .issuer
@@ -160,7 +224,7 @@ impl Fixture {
                 "flare-platform-worker",
                 Some("201"),
                 "control",
-                "flare-plugin-runtime:admin-1",
+                "flare-plugin-runtime:admin-1:org-1",
             )
             .unwrap();
         let mut request = Request::new(state);
@@ -192,6 +256,7 @@ impl Fixture {
     ) -> Request<GenericRequest> {
         let now = now_ms();
         let claims = PluginStaffCallClaims {
+            scope: Default::default(),
             tenant_id: "201".into(),
             plugin_id: PLUGIN.into(),
             plugin_version: "1.0.0".into(),
