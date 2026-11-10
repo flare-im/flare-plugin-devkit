@@ -28,7 +28,7 @@ fn signed_with_schema(
     } else {
         vec![]
     };
-    let mut value = json!({"manifestVersion":1,"pluginId":"example.wasm","version":"0.1.0","apiVersion":"1.0","displayName":"Isolated WASM","publisher":{"publisherId":"fixture","displayName":"Fixture"},"runtime":{"kind":"wasm","module":"plugin.wasm","abiVersion":ABI_VERSION,"maxMemoryPages":pages,"maxFuel":fuel},"capabilities":[{"id":"example.wasm","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":["example.wasm.run"],"hostCapabilities":scope,"idempotent":true,"timeoutMs":1000}]}],"permissions":[{"id":"example.wasm.run","description":"Read the bound conversation","dataScopes":scope,"riskLevel":"high"}],"artifact":{"digest":digest_bytes(bytes),"signatureRef":"fixture"}});
+    let mut value = json!({"manifestVersion":1,"pluginId":"example.wasm","version":"0.1.0","apiVersion":"1.0","displayName":"Isolated WASM","publisher":{"publisherId":"fixture","displayName":"Fixture"},"runtime":{"kind":"wasm","module":"plugin.wasm","abiVersion":ABI_VERSION,"maxMemoryPages":pages,"maxFuel":fuel},"capabilities":[{"id":"example.wasm","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":["example.wasm.run"],"hostCapabilities":scope,"idempotent":true,"timeoutMs":1000}]}],"permissions":[{"id":"example.wasm.run","description":"Read the bound conversation","dataScopes":scope,"riskLevel":"high"}],"features":[{"id":"run","label":{"en-US":"Run"},"gates":{"operations":["example.wasm.run"]}}],"artifact":{"digest":digest_bytes(bytes),"signatureRef":"fixture"}});
     if let Some(schema) = schema {
         value["capabilities"][0]["operations"][0]["inputSchema"] = schema;
     }

@@ -1,0 +1,15 @@
+# {{name}}
+
+A Flare plugin. `manifest.json` declares what it offers; the platform verifies the signed bytes.
+
+```sh
+flare-plugin check .
+flare-plugin pack . --key publisher.pem --key-id <key id>
+flare-plugin publish {{name}}-1.0.0.fpkg --url https://console.example.com
+```
+
+Files under `assets/` go into the package, and `pack` lists their digests in the manifest it signs.
+Replace the `artifact` placeholders with what your release pipeline built. `check` warns until you do.
+
+Implement the service with `flare-plugin-kit`, following the
+[plugin guide](https://github.com/flare-im/flare-plugin-devkit/blob/main/flare-plugin-host/docs/build-your-own-plugin.md).

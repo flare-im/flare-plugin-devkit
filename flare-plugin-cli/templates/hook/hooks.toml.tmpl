@@ -1,0 +1,10 @@
+[[pre_send]]
+name = "{{name}}"
+enabled = true
+order = 100
+timeout_ms = 200
+require_success = false
+
+[pre_send.transport]
+type = "grpc"
+endpoint = "http://127.0.0.1:7801"

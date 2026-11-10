@@ -71,6 +71,30 @@ impl HostResourceClient {
         self.send(request, &invocation.request_id).await
     }
 
+    /// A restricted event read: membership of exactly the actor in the signed conversation.
+    /// Core rechecks the current grant and authoritative membership under its service identity.
+    pub async fn read_event(
+        &self,
+        event: &crate::VerifiedPluginEvent,
+        resource: &ResourceRequest,
+    ) -> Result<serde_json::Value, Status> {
+        if !matches!(resource, ResourceRequest::ConversationMembersCheck { user_ids } if user_ids.as_slice() == [event.actor_id()])
+        {
+            return Err(Status::permission_denied("event resource access denied"));
+        }
+        resource
+            .validate()
+            .map_err(|_| Status::invalid_argument("invalid resource request"))?;
+        let mut request = Request::new(envelope(
+            resource.capability().id(),
+            event.request_id(),
+            serde_json::to_vec(resource)
+                .map_err(|_| Status::invalid_argument("invalid resource request"))?,
+        ));
+        insert_credential(&mut request, PLUGIN_CALL_HEADER, &event.delegation)?;
+        self.send(request, event.request_id()).await
+    }
+
     /// Publish `state` for an entity of this plugin under the runtime
     /// credential of `tenant_id`'s grant `grant_id` (see
     /// [`PluginRuntimeHost::sign_runtime_write`]). `published`, `duplicate` and

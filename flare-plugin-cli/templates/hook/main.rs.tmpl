@@ -1,0 +1,102 @@
+//! {{name}}: a `pre_send` hook service. Flare calls `HookPlugin.Call` before it stores a message.
+
+use flare_grpc_proto::capability::hook_plugin_server::{HookPlugin, HookPluginServer};
+use flare_grpc_proto::capability::{
+    GenericRequest, GenericResponse, PreSendHookRequest, PreSendHookResponse,
+};
+use prost::Message as _;
+use tonic::{Request, Response, Status, transport::Server};
+
+const OP_PRE_SEND: &str = "flare.hook.v1.pre_send";
+/// Flare decodes the reply by this type, so it has to match.
+const PRE_SEND_RESPONSE_TYPE: &str = "type.googleapis.com/flare.capability.v1.PreSendHookResponse";
+
+struct Hook;
+
+impl Hook {
+    /// Your rule. Hand the draft back to allow the message, changed if you rewrite it: Flare goes on
+    /// with what you return, so a missing draft empties the message.
+    ///
+    /// To refuse, return `allow: false` with a stable `deny_reason_code` for clients to branch on
+    /// and a `deny_reason_message` written for the sender, who sees it.
+    fn pre_send(&self, request: PreSendHookRequest) -> PreSendHookResponse {
+        PreSendHookResponse {
+            allow: true,
+            draft: request.draft,
+            ..Default::default()
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl HookPlugin for Hook {
+    async fn call(
+        &self,
+        request: Request<GenericRequest>,
+    ) -> Result<Response<GenericResponse>, Status> {
+        let request = request.into_inner();
+        let reply = match request.operation.as_str() {
+            OP_PRE_SEND => {
+                let payload = request.payload.map(|any| any.value).unwrap_or_default();
+                let decoded = PreSendHookRequest::decode(payload.as_slice())
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                self.pre_send(decoded)
+            }
+            // Allow what you do not know: a point added to Flare later must not stop every message.
+            other => {
+                tracing::debug!(operation = %other, "allowing an unknown operation");
+                PreSendHookResponse {
+                    allow: true,
+                    ..Default::default()
+                }
+            }
+        };
+        Ok(Response::new(GenericResponse {
+            ok: true,
+            request_id: request.request_id,
+            payload: Some(prost_types::Any {
+                type_url: PRE_SEND_RESPONSE_TYPE.to_string(),
+                value: reply.encode_to_vec(),
+            }),
+            ..Default::default()
+        }))
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+    let addr = std::env::var("HOOK_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:7801".to_string())
+        .parse()?;
+    tracing::info!(%addr, "{{name}} is listening");
+    Server::builder()
+        .add_service(HookPluginServer::new(Hook))
+        .serve(addr)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flare_grpc_proto::capability::HookMessageDraft;
+
+    #[test]
+    fn an_allowed_message_keeps_its_draft() {
+        let draft = HookMessageDraft {
+            conversation_id: "c1".to_string(),
+            ..Default::default()
+        };
+        let reply = Hook.pre_send(PreSendHookRequest {
+            context: None,
+            draft: Some(draft.clone()),
+        });
+        assert!(reply.allow);
+        assert_eq!(reply.draft, Some(draft));
+    }
+}

@@ -3,7 +3,6 @@ use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{
     Signer, SigningKey,
-    pkcs8::{EncodePrivateKey, EncodePublicKey},
 };
 use flare_grpc_proto::capability::{
     GenericResponse,
@@ -101,6 +100,7 @@ fn manifest() -> Vec<u8> {
             {"id": "example.admin.use", "description": "Use", "dataScopes": ["im.plugin.entity_state.publish"], "riskLevel": "low"},
             {"id": "example.admin.manage", "description": "Manage", "dataScopes": ["admin"], "riskLevel": "high"}
         ],
+        "features": [{"id": "run", "label": {"en-US": "Run"}, "gates": {"operations": ["example.admin.run"]}}],
         "clientExtensions": {"platforms": ["web"], "nativeCapabilities": [], "contributions": []},
         // `list` needs `read`; `close` needs `manage` and the operator's reason.
         "admin": {
@@ -131,7 +131,6 @@ fn manifest() -> Vec<u8> {
 
 struct Fixture {
     host: PluginRuntimeHost,
-    issuer: TokenService,
     calls: PluginCallSigner,
 }
 
@@ -164,13 +163,6 @@ fn fixture_with(raw: Vec<u8>, runtime_key: Option<[u8; 32]>) -> Fixture {
         artifact_digest: format!("sha256:{}", "a".repeat(64)),
         grpc_authority: "http://127.0.0.1:7901".into(),
     };
-    let key = SigningKey::from_bytes(&[72; 32]);
-    let issuer = TokenService::from_ed25519_private_key(
-        &key.to_pkcs8_pem(Default::default()).unwrap(),
-        "flare-platform",
-        60,
-    )
-    .unwrap();
     let calls = PluginCallSigner::new("call-key".into(), [73; 32]).unwrap();
     let mut verifier = PluginCallVerifier::default();
     verifier
@@ -179,9 +171,6 @@ fn fixture_with(raw: Vec<u8>, runtime_key: Option<[u8; 32]>) -> Fixture {
     let host = PluginRuntimeHost::new(
         manifest,
         deployment,
-        &key.verifying_key()
-            .to_public_key_pem(Default::default())
-            .unwrap(),
         verifier,
         Arc::new(|_| Ok(())),
         Arc::new(crate::state_store::MemoryStore::default()),
@@ -195,7 +184,6 @@ fn fixture_with(raw: Vec<u8>, runtime_key: Option<[u8; 32]>) -> Fixture {
     };
     Fixture {
         host,
-        issuer,
         calls,
     }
 }
@@ -218,19 +206,7 @@ impl Fixture {
             permissions: Vec::new(),
             data_scopes: Vec::new(),
         };
-        let token = self
-            .issuer
-            .generate_with_ed25519(
-                "flare-platform-worker",
-                Some("201"),
-                "control",
-                "flare-plugin-runtime:admin-1:org-1",
-            )
-            .unwrap();
-        let mut request = Request::new(state);
-        request
-            .metadata_mut()
-            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let request = tenant_state_request(&self.calls, state).unwrap();
         self.host.apply_tenant(request).await.unwrap();
     }
     /// A staff ticket holding the permission `operation` declares, with a reason.

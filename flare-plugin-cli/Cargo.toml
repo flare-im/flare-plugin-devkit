@@ -1,0 +1,28 @@
+[package]
+name = "flare-plugin-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+license = "Apache-2.0"
+description = "The flare-plugin command: scaffold, check, pack, publish and develop Flare plugins"
+repository = "https://github.com/flare-im/flare-plugin-devkit"
+# Installed from this repository: it embeds ../template, which a registry package could not reach.
+publish = false
+
+[[bin]]
+name = "flare-plugin"
+path = "src/main.rs"
+
+[dependencies]
+flare-plugin-protocol = { version = "0.1.0", path = "../../flare-protocol/flare-plugin-protocol" }
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# Filling the asset table keeps the publisher's key order.
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

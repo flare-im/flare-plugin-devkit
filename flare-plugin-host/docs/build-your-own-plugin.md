@@ -2,26 +2,63 @@
 
 插件服务端必须按 [DDD + CQRS 规范](./plugin-ddd-cqrs.md) 组织：领域、用例（命令与查询分开）、基础设施、接口四层；公共骨架用 `flare-plugin-kit`。
 
-1. 从 `../../template/platform-plugin.template.json` 建立平台清单，定义稳定 ID、版本、capability/operation、最小权限与数据范围、依赖、事件、Hook、UI 和卸载数据策略。
-2. 使用 `flare-plugin-protocol` 的 `PluginManifest::validate` 校验语义。JSON Schema 校验结构；权限引用、重复 operation、API 兼容与依赖范围也必须通过。
-3. 可信发布流程生成制品摘要，使用独立发布者密钥对精确清单字节签名。平台 `PublisherTrustStore` 验签后获得 `VerifiedManifest`，`PluginRegistry` 固定版本和依赖摘要。
-4. 实现 `ExtensionPlugin.Call`，只处理声明的 operation。上下文必须来自 `PluginRuntimeHost` 校验的 `x-flare-plugin-call`，并使用返回的配置快照；metadata 中的 tenant/user 仅用于诊断。
-5. 组合 `PluginRuntimeHost` 与 `PluginRuntimeServer`，提供租户配置 validator，与业务服务共用 listener。使用发布者验签后的 Manifest 和平台登记的 deployment 绑定。
-6. 宿主仅持有发布者、平台控制和独立调用 signer 的公钥。平台审批及配置由既有 scheduler 投递；业务处理器使用 `verify_user_call`。诊断注册是可选路径，不授予业务调用权。
-7. 平台发布、依赖校验、租户申请/审批、配置和启用独立执行。注册成功不等于批准，也不能绕过用户 operation 权限。
-8. 停机通过 `set_draining` 停止新请求，业务实现完成或取消已准入任务。升级与回滚编排仍按后续阶段验收；新旧版本隔离业务和配置。
+1. 运行 `flare-plugin new plugin acme.poll` 生成插件目录，再改 `manifest.json`：稳定 ID、版本、capability/operation、最小权限与数据范围、依赖、事件、功能、UI 和卸载数据策略。安装方法见 [DevKit README](../../README.zh-CN.md)。
+2. 运行 `flare-plugin check <dir>`。它用 `PluginManifest::from_json` 校验语义（权限引用、重复 operation、API 兼容与依赖范围），输出警告和推导出的插件类型。
+3. 可信发布流程生成制品摘要，写进 `artifact`。图标和截图放进 `assets/`，`pack` 把它们的摘要写进所签的 Manifest，磁盘上的文件不变。运行 `flare-plugin pack <dir> --key publisher.pem --key-id <id>`：用独立发布者密钥对精确清单字节签名，写出 `<pluginId>-<version>.fpkg`。相同目录和密钥得到逐字节相同的包。
+4. 运行 `flare-plugin publish <file> --url <控制台地址>`，令牌放在 `FLARE_PLUGIN_TOKEN`，需要 `plugins:catalog:write`；也可以在控制台版本页选择文件上传。平台 `PublisherTrustStore` 验签后获得 `VerifiedManifest`，素材入库，`PluginRegistry` 固定版本和依赖摘要。版本登记后不上架，上架是单独的操作。
+5. 实现 `ExtensionPlugin.Call`，只处理声明的 operation。上下文必须来自 `PluginRuntimeHost` 校验的 `x-flare-plugin-call`，并使用返回的配置快照；metadata 中的 tenant/user 仅用于诊断。
+6. 组合 `PluginRuntimeHost` 与 `PluginRuntimeServer`，提供租户配置 validator，与业务服务共用 listener。使用发布者验签后的 Manifest 和平台登记的 deployment 绑定。
+7. 宿主仅持有发布者、平台控制和独立调用 signer 的公钥。平台审批及配置由既有 scheduler 投递；业务处理器使用 `verify_user_call`。诊断注册是可选路径，不授予业务调用权。
+8. 平台发布、依赖校验、租户申请/审批、配置和启用独立执行。注册成功不等于批准，也不能绕过用户 operation 权限。
+9. 停机通过 `set_draining` 停止新请求，业务实现完成或取消已准入任务。升级与回滚编排仍按后续阶段验收；新旧版本隔离业务和配置。
 
 插件独立拥有业务数据并以 tenant 强制分区。查询、缓存、事件订阅、对象存储 key 和密钥都包含租户范围。业务命令提供幂等键；跨服务副作用使用 outbox/幂等消费。卸载默认保留数据，清理需要独立授权和审计。
 
-## 可选的工作负载自注册
+## 本机开发
 
-平台投影已经包含共享部署地址；正常安装、配置、启停和业务调用不依赖注册 broker。需要宿主自注册时，使用 `PluginHost::connect_with_workload(endpoint, plugin_id).await`，再调用 `announce`。`plugin_id` 及声明应来自已验证的 Manifest，租户应来自已批准的部署编排。
+`flare-plugin dev` 把本机进程接到一个开发应用上，不走打包、上架、申请和审批：
 
-运维提供 `FLARE_PLUGIN_BROKER_URL`（HTTPS 完整路径 `/api/v1/internal/plugins/registration-tokens`）、`FLARE_PLUGIN_WORKLOAD_TOKEN_FILE`（投影文件绝对路径）、`FLARE_PLUGIN_DEPLOYMENT_ID`，可选 `FLARE_PLUGIN_BROKER_CA_FILE`。投影 audience 固定为 `flare-plugin-broker`；使用只读目录挂载，不使用 `subPath`。不要挂载平台或 Cell 私钥。
+```sh
+flare-plugin dev ./acme.poll --app 201 --url http://127.0.0.1:50051 \
+  --token "$FLARE_PLUGIN_TOKEN" --process http://127.0.0.1:7900
+```
 
-宿主每次重新打开令牌文件，支持 Kubernetes 原子替换轮换。平台核对 TokenReview 中的 ServiceAccount 名称、UID、Pod 绑定，以及不可变部署和租户审批；只返回完整请求绑定、60 秒有效的 `plugin_registration` 凭据。Core 仅在注册/注销入口接受，不能用于用户调用、资源回调或配置投影。错误会显式返回，不回退裸注册。配置变更由运维发布；租户的安装和启停无需重启 IM 服务。
+它把 `manifest.json` 登记成未签名的开发版本，加一个指向 `--process` 的部署，再写入这个应用的状态。之后每秒看一次文件，内容变了就重新登记。令牌是这个应用的员工令牌，需要 `core:plugins:write`；`--url` 是 Core 管理网关，不是控制台。配置用 `--config <file>` 传，默认 `{}`，文件变了同样重新登记。按 Ctrl-C 退出，已登记的内容留着，进程不再应答后 Core 把插件从应用里摘掉。
 
-自定义 `RegistrationTokenProvider` 接收完整的 `RegistrationRequest`，不能只按插件、租户和 request ID 签发通用身份。共享部署退出单个副本时使用 runtime drain；不要对整个共享服务执行 `withdraw`。注销是租户/插件地址簿操作，不能代替多实例排空。
+要满足三个条件，缺一个 Core 都拒绝：
+
+1. Capability 启动时设了 `FLARE_PLUGIN_DEV_MODE=1`。只有值为 `1` 才生效。发版构建和部署模板从不设它，发版监管进程也不继承。没有这个开关，已有的开发数据一律不生效。
+2. 这个应用被标记为开发用途。平台员工用 `core:plugins:platform:write` 调用 `PUT /api/v1/admin/platform/plugin-registry/dev-apps/{app_id}`，请求体 `{"development":true}`。写 `false` 同时删除这个应用的开发绑定。
+3. 这个版本号没有被正式版本占用，插件 ID 和 capability 命名空间不属于别的发布者或插件。
+
+开发版本不进市场，也不出现在注册表列表、版本详情和部署列表里，不能发布，不能用 `plugin_config.put` 绑定，投影也不能引用它。声明的操作和权限全部授予，功能按 `defaultEnabled`，同一插件已有的正式安装被它顶替。这些只发生在开发应用里。
+
+本机进程按正常方式组合 `PluginRuntimeHost`，环境变量要和登记内容对上：
+
+- `FLARE_PLUGIN_DEPLOYMENT_ID`：默认 `dev-<pluginId>`，用 `--deployment-id` 改，必须以 `dev-` 开头。两个应用同时开发同一插件时各用一个。
+- `FLARE_PLUGIN_GRPC_AUTHORITY`：和 `--process` 相同，命令也读这个变量。地址要从 Capability 所在的位置能连上。
+- `FLARE_PLUGIN_MANIFEST_PATH`：指向同一个 `manifest.json`。Core 记录的摘要按文件字节算，所以不会像 `pack` 那样补素材表。
+- `FLARE_PLUGIN_CALL_PUBLIC_KEYS`：用开发栈的公钥。
+- 宿主启动时仍然校验 Manifest 签名。用自己的开发密钥签，把公钥写进 `FLARE_PLUGIN_PUBLISHER_PUBLIC_KEY`。
+
+Manifest 必须带 `artifact`，占位内容也行。宿主只在启动时读一次 Manifest，改完要带新签名重启进程，否则摘要对不上，调用报投影过期。改同一版本号的 Manifest 时，别的应用如果在用这个版本的旧内容，登记会被拒绝，换一个版本号。
+
+目前的限制：`assets/` 不上传；Storage 读写服务只看平台投影，开发插件发的卡片不会绑定实体，要验证卡片仍然走 `scripts/plugin-online-lab.py`。这个脚本验收完整的发布、审批和投影链路，`dev` 不替代它。
+
+## 发布者密钥
+
+用 OpenSSL 生成 Ed25519 密钥，再取出平台要登记的公钥：
+
+```sh
+openssl genpkey -algorithm ed25519 -out publisher.pem
+openssl pkey -in publisher.pem -pubout -outform DER | tail -c 32 | base64
+```
+
+运维把公钥写进平台的 `FLARE_PLUGIN_PUBLISHER_KEYS`：`[{"key_id","publisher_id","public_key_base64"}]`。`publisher_id` 必须等于 Manifest 的 `publisher.publisherId`。私钥不要进仓库。
+
+## Hook 服务
+
+Hook 不是插件，不走打包和发布。运行 `flare-plugin new hook spam-filter` 生成一个只实现 `HookPlugin.Call` 的 `pre_send` 服务，在 `Hook::pre_send` 里写规则。生成的 `hooks.toml` 是部署配置样例；平台和应用的 Hook 在控制台配置。
 
 ## 读取当前会话资源
 

@@ -1,5 +1,6 @@
-//! Shared multi-tenant runtime on the plugin's existing gRPC listener. Control
-//! assertions and invocation tickets have independent audiences and key sets.
+//! Shared multi-tenant runtime on the plugin's existing gRPC listener. Core's
+//! reconciler delivers tenant states, and Core forwards the platform's data jobs, under Core
+//! system tickets (`FLARE_PLUGIN_CALL_PUBLIC_KEYS`, the keys of every other ticket).
 use crate::{VerifiedPluginStaff, VerifiedPluginSystem, VerifiedPluginUser};
 use flare_grpc_proto::capability::{
     GenericRequest, PluginRuntimeInspectRequest, PluginRuntimeInspectResponse, PluginTenantState,
@@ -7,14 +8,14 @@ use flare_grpc_proto::capability::{
 };
 use flare_plugin_protocol::{
     invocation::{
-        MAX_RUNTIME_CALL_TTL_MS, PLUGIN_CALL_HEADER, PLUGIN_RUNTIME_HEADER, PluginCallVerifier,
-        PluginRuntimeClaims, PluginRuntimeSigner, ticket_key_id,
+        MAX_RUNTIME_CALL_TTL_MS, PLUGIN_CALL_HEADER, PLUGIN_RUNTIME_HEADER, PluginCallSigner,
+        PluginCallVerifier, PluginRuntimeClaims, PluginRuntimeSigner, PluginTenantStateClaims,
+        ticket_key_id,
     },
     resource::{HostCapability, MAX_RESOURCE_REQUEST_BYTES, ResourceWriteRequest},
     runtime::{MAX_PROJECTION_LEASE_MS, PluginDeployment, configuration_digest, digest_bytes},
     signature::VerifiedManifest,
 };
-use flare_server_core::TokenService;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -22,6 +23,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tonic::{Request, Response, Status};
+#[path = "runtime_event.rs"]
+mod event;
 #[path = "runtime_status.rs"]
 mod status;
 pub use status::TenantStatus;
@@ -47,12 +50,39 @@ pub const RUNTIME_KEY_ID_ENV: &str = "FLARE_PLUGIN_RUNTIME_KEY_ID";
 pub const RUNTIME_SIGNING_KEY_ENV: &str = "FLARE_PLUGIN_RUNTIME_SIGNING_KEY";
 /// Lifetime of one runtime credential; well under [`MAX_RUNTIME_CALL_TTL_MS`].
 const RUNTIME_CREDENTIAL_TTL_MS: i64 = 30_000;
+/// `state` as Core delivers it: a request carrying the ticket for exactly this state. For plugin
+/// test harnesses, which stand in for Core.
+pub fn tenant_state_request(
+    signer: &PluginCallSigner,
+    state: PluginTenantState,
+) -> Result<Request<PluginTenantState>, Box<dyn std::error::Error>> {
+    let now = now_ms();
+    let ticket = signer.sign_tenant_state(
+        &PluginTenantStateClaims {
+            tenant_id: state.app_id.clone(),
+            organization_id: state.organization_id.clone(),
+            deployment_id: state.deployment_id.clone(),
+            manifest_digest: state.manifest_digest.clone(),
+            grant_id: state.grant_id.clone(),
+            revision: state.revision,
+            configuration_digest: state.configuration_digest.clone(),
+            enabled: state.enabled,
+            issued_at_ms: now,
+            expires_at_ms: now + RUNTIME_CREDENTIAL_TTL_MS,
+        },
+        now,
+    )?;
+    let mut request = Request::new(state);
+    request
+        .metadata_mut()
+        .insert(PLUGIN_CALL_HEADER, ticket.parse()?);
+    Ok(request)
+}
 #[derive(Clone)]
 pub struct PluginRuntimeHost(Arc<Inner>);
 struct Inner {
     manifest: VerifiedManifest,
     deployment: PluginDeployment,
-    control: TokenService,
     calls: PluginCallVerifier,
     validate: Arc<ConfigurationValidator>,
     states: Arc<dyn super::state_store::TenantStateStore>,
@@ -170,7 +200,7 @@ fn runtime_request_id() -> String {
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     )
 }
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|t| t.as_millis().min(i64::MAX as u128) as i64)
@@ -211,13 +241,14 @@ impl PluginRuntimeHost {
     ) -> Result<(Self, T), Box<dyn std::error::Error>> {
         use base64::{Engine, engine::general_purpose::STANDARD};
         let path = std::env::var("FLARE_PLUGIN_MANIFEST_PATH")?;
-        if std::fs::metadata(&path)?.len() > 512 * 1024 {
+        let limit = flare_plugin_protocol::manifest::MAX_MANIFEST_BYTES as u64;
+        if std::fs::metadata(&path)?.len() > limit {
             return Err("manifest exceeds limit".into());
         }
         use std::io::Read;
         let mut raw = Vec::new();
         std::fs::File::open(path)?
-            .take(512 * 1024 + 1)
+            .take(limit + 1)
             .read_to_end(&mut raw)?;
         let mut trust = flare_plugin_protocol::signature::PublisherTrustStore::default();
         let key_id = std::env::var("FLARE_PLUGIN_PUBLISHER_KEY_ID")?;
@@ -254,7 +285,6 @@ impl PluginRuntimeHost {
         let host = Self::new(
             manifest,
             deployment,
-            &std::env::var("FLARE_PLATFORM_PUBLIC_KEY")?,
             calls,
             validate,
             Arc::new(
@@ -274,13 +304,11 @@ impl PluginRuntimeHost {
     pub fn new(
         manifest: VerifiedManifest,
         deployment: PluginDeployment,
-        platform_public_key: &str,
         calls: PluginCallVerifier,
         validate: Arc<ConfigurationValidator>,
         states: Arc<dyn super::state_store::TenantStateStore>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         deployment.validate(manifest.manifest(), manifest.digest())?;
-        let control = TokenService::from_ed25519_public_key(platform_public_key, "flare-platform")?;
         let admin_operations = manifest.manifest().admin_operations();
         let admin_permissions = admin_operations
             .iter()
@@ -335,7 +363,6 @@ impl PluginRuntimeHost {
             protocols: Vec::new(),
             manifest,
             deployment,
-            control,
             calls,
             validate,
             states,
@@ -492,13 +519,13 @@ impl PluginRuntimeHost {
     pub async fn drain(&self, deadline: std::time::Duration) -> Result<(), Status> {
         self.0.lifecycle.drain(deadline).await
     }
-    /// Independent, request-bound operator authority. User, registration and
+    /// Core's data ticket, bound to the exact request. User, staff, system and
     /// ApplyTenant tickets cannot authorize a data export or download.
     pub async fn verify_data_request(
         &self,
         request: &Request<GenericRequest>,
     ) -> Result<crate::protocol::data::DataRequest, Status> {
-        use crate::protocol::data::{DataRequest, OPERATION, TOKEN_USE};
+        use crate::protocol::data::{DataRequest, OPERATION};
         if request.get_ref().operation != OPERATION {
             return Err(Status::permission_denied("data purpose required"));
         }
@@ -512,31 +539,32 @@ impl PluginRuntimeHost {
         }
         let data: DataRequest = serde_json::from_slice(&payload.value)
             .map_err(|_| Status::invalid_argument("invalid data request"))?;
-        let audience = data
-            .audience()
+        let digest = data
+            .digest()
             .map_err(|_| Status::invalid_argument("invalid data request"))?;
-        let mut headers = request.metadata().get_all("authorization").iter();
+        let mut headers = request.metadata().get_all(PLUGIN_CALL_HEADER).iter();
         let token = headers
             .next()
             .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "))
-            .filter(|s| s.len() <= 8192)
-            .ok_or_else(|| Status::unauthenticated("data credential required"))?;
+            .ok_or_else(|| Status::unauthenticated("data ticket required"))?;
         if headers.next().is_some() {
-            return Err(Status::unauthenticated("one data credential required"));
+            return Err(Status::unauthenticated("one data ticket required"));
         }
+        if ticket_key_id(token).is_some_and(|id| !self.0.calls.has_key(&id)) {
+            return Err(projection_stale());
+        }
+        let now = now_ms();
         let claims = self
             .0
-            .control
-            .validate_ed25519_with_use(token, TOKEN_USE, &audience)
-            .map_err(|_| Status::unauthenticated("invalid data credential"))?;
-        let now = now_ms();
-        if claims.sub != "flare-platform-worker"
-            || claims.tenant_id.as_deref() != Some(data.app_id.as_str())
-            || claims.iat > (now / 1000).max(0) as usize + 5
-            || claims.exp <= (now / 1000).max(0) as usize
-            || claims.exp <= claims.iat
-            || claims.exp - claims.iat > 60
+            .calls
+            .verify_data(token, now)
+            .map_err(|_| Status::unauthenticated("invalid data ticket"))?;
+        if claims.request_digest != digest
+            || claims.tenant_id != data.app_id
+            || claims.deployment_id != data.deployment_id
+            || claims.manifest_digest != data.manifest_digest
+            || claims.grant_id != data.grant_id
+            || claims.grant_revision != data.grant_revision
             || data.deployment_id != self.0.deployment.deployment_id
             || data.manifest_digest != self.0.deployment.manifest_digest
             || request.get_ref().request_id != data.job_id
@@ -701,6 +729,11 @@ impl PluginRuntimeHost {
                 .contains(&claims.operation)
             || self.0.admin_operations.contains(&claims.operation)
             || self.0.lifecycle_operations.contains(&claims.operation)
+            || self
+                .manifest()
+                .event_subscriptions
+                .iter()
+                .any(|s| s.operation == claims.operation)
         {
             return Err(denied());
         }
@@ -1006,39 +1039,35 @@ impl PluginRuntimeHost {
             _admission: self.0.lifecycle.admit()?,
         })
     }
+    /// The state must be exactly the one Core's ticket names. A ticket under a key this deployment
+    /// has not been given yet is not a refusal: Core rotated first, and retries.
     fn authenticate(&self, request: &Request<PluginTenantState>) -> Result<(), Status> {
-        let mut values = request.metadata().get_all("authorization").iter();
+        let mut values = request.metadata().get_all(PLUGIN_CALL_HEADER).iter();
         let token = values
             .next()
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .filter(|v| v.len() <= 8192)
-            .ok_or_else(|| Status::unauthenticated("runtime worker assertion required"))?;
+            .ok_or_else(|| Status::unauthenticated("tenant state ticket required"))?;
         if values.next().is_some() {
-            return Err(Status::unauthenticated("one worker assertion required"));
+            return Err(Status::unauthenticated("one tenant state ticket required"));
         }
-        let audience = format!(
-            "flare-plugin-runtime:{}:{}",
-            self.0.deployment.deployment_id,
-            request.get_ref().organization_id
-        );
+        if ticket_key_id(token).is_some_and(|id| !self.0.calls.has_key(&id)) {
+            return Err(projection_stale());
+        }
         let claims = self
             .0
-            .control
-            .validate_ed25519_with_use(token, "control", &audience)
-            .map_err(|_| Status::unauthenticated("invalid runtime assertion"))?;
-        let now_seconds = (now_ms() / 1000).max(0) as usize;
-        if claims.iat > now_seconds.saturating_add(5)
-            || claims.exp <= claims.iat
-            || claims.exp <= now_seconds
-        {
-            return Err(Status::unauthenticated(
-                "expired or future runtime assertion",
-            ));
-        }
-        if claims.sub != "flare-platform-worker"
-            || claims.tenant_id.as_deref() != Some(request.get_ref().app_id.as_str())
-            || claims.exp.saturating_sub(claims.iat) > 60
+            .calls
+            .verify_tenant_state(token, now_ms())
+            .map_err(|_| Status::unauthenticated("invalid tenant state ticket"))?;
+        let state = request.get_ref();
+        if claims.tenant_id != state.app_id
+            || claims.organization_id != state.organization_id
+            || claims.deployment_id != state.deployment_id
+            || claims.deployment_id != self.0.deployment.deployment_id
+            || claims.manifest_digest != state.manifest_digest
+            || claims.grant_id != state.grant_id
+            || claims.revision != state.revision
+            || claims.configuration_digest != state.configuration_digest
+            || claims.enabled != state.enabled
         {
             return Err(denied());
         }

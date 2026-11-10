@@ -3,7 +3,6 @@ use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{
     Signer, SigningKey,
-    pkcs8::{EncodePrivateKey, EncodePublicKey},
 };
 use flare_plugin_protocol::{
     invocation::{
@@ -35,6 +34,7 @@ fn manifest() -> Vec<u8> {
         "runtime": {"kind": "grpc", "service": "example.life.v1.PluginService", "protocol": "flare.capability.v1"},
         "capabilities": [{"id": PLUGIN, "operations": [operation("vote"), operation("unbound"), query("list")]}],
         "permissions": [{"id": "example.life.use", "description": "Use", "dataScopes": [], "riskLevel": "low"}],
+        "features": [{"id": "vote", "label": {"en-US": "Vote"}, "gates": {"operations": ["example.life.vote"]}}],
         "clientExtensions": {"platforms": ["web"], "nativeCapabilities": [], "contributions": [
             {"id": "example.life.card", "kind": "message-content", "schemaVersion": 1,
              "requiredPermissions": ["example.life.use"], "entityPath": "/pollId",
@@ -56,7 +56,6 @@ fn manifest() -> Vec<u8> {
 
 struct Fixture {
     host: PluginRuntimeHost,
-    issuer: TokenService,
     calls: PluginCallSigner,
 }
 
@@ -86,13 +85,6 @@ fn fixture() -> Fixture {
         artifact_digest: format!("sha256:{}", "a".repeat(64)),
         grpc_authority: "http://127.0.0.1:7902".into(),
     };
-    let key = SigningKey::from_bytes(&[82; 32]);
-    let issuer = TokenService::from_ed25519_private_key(
-        &key.to_pkcs8_pem(Default::default()).unwrap(),
-        "flare-platform",
-        60,
-    )
-    .unwrap();
     let calls = PluginCallSigner::new("call-key".into(), [83; 32]).unwrap();
     let mut verifier = PluginCallVerifier::default();
     verifier
@@ -101,9 +93,6 @@ fn fixture() -> Fixture {
     let host = PluginRuntimeHost::new(
         manifest,
         deployment,
-        &key.verifying_key()
-            .to_public_key_pem(Default::default())
-            .unwrap(),
         verifier,
         Arc::new(|_| Ok(())),
         Arc::new(crate::state_store::MemoryStore::default()),
@@ -111,7 +100,6 @@ fn fixture() -> Fixture {
     .unwrap();
     Fixture {
         host,
-        issuer,
         calls,
     }
 }
@@ -134,19 +122,7 @@ impl Fixture {
             permissions: Vec::new(),
             data_scopes: Vec::new(),
         };
-        let token = self
-            .issuer
-            .generate_with_ed25519(
-                "flare-platform-worker",
-                Some("201"),
-                "control",
-                "flare-plugin-runtime:life-1:org-1",
-            )
-            .unwrap();
-        let mut request = Request::new(state);
-        request
-            .metadata_mut()
-            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let request = tenant_state_request(&self.calls, state).unwrap();
         self.host.apply_tenant(request).await.unwrap();
     }
 

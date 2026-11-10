@@ -15,9 +15,12 @@ use flare_grpc_proto::capability::{
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tonic::{Request, Status};
+/// The message of the refusal for a `user` mode operation whose feature the application closed
+/// or never published. The Core adapter turns exactly this answer into `PLUGIN_FEATURE_DISABLED`.
+pub const FEATURE_DISABLED: &str = "service feature disabled";
 #[tonic::async_trait]
 pub trait ServiceDirectory: Send + Sync {
-    async fn snapshot(&self, tenant: &str) -> Result<PluginRuntimeSnapshot, Status>;
+    async fn snapshot(&self, tenant: &str) -> Result<Arc<PluginRuntimeSnapshot>, Status>;
     async fn check_policy(&self, tenant: &str, operation: &str) -> Result<(), Status>;
     /// Shared admission ledger, keyed by the original Core request for member
     /// calls and by the signed workload request for recovery.
@@ -111,7 +114,7 @@ impl PluginServiceRouter {
         {
             return Err(denied());
         }
-        let source_manifest = source.manifest().map_err(|_| denied())?;
+        let source_manifest = source.manifest();
         let target = snapshot
             .plugins
             .iter()
@@ -123,7 +126,7 @@ impl PluginServiceRouter {
             })
             .max_by_key(|p| (p.grant.enabled && !p.grant.revoked, p.grant.revision))
             .ok_or_else(denied)?;
-        let target_manifest = target.manifest().map_err(|_| denied())?;
+        let target_manifest = target.manifest();
         if !source_manifest.requires(&target.grant.plugin_id, &target.grant.plugin_version) {
             return Err(denied());
         }
@@ -132,6 +135,15 @@ impl PluginServiceRouter {
             .iter()
             .find(|s| s.operation == request.operation && s.mode == request.mode)
             .ok_or_else(denied)?;
+        // Closing a payment stops new user calls; `recovery` reconciliation is never gated.
+        if service.mode == ServiceMode::User
+            && target
+                .closed()
+                .service_operations
+                .contains(&service.operation)
+        {
+            return Err(Status::permission_denied(FEATURE_DISABLED));
+        }
         let target_op = target_manifest
             .operation(&service.operation)
             .ok_or_else(denied)?;
@@ -158,9 +170,53 @@ impl PluginServiceRouter {
         {
             return Err(denied());
         }
-        let (actor, origin, budget_request, expires) =
+        let (actor, conversation, origin, budget_request, expires) =
             if let Some(ticket) = request.actor_ticket.as_deref() {
-                let user = self.calls.verify(ticket, now).map_err(|_| denied())?;
+                // An event authenticates its actor only in this restricted delegation domain.
+                // Never turn it into a user ticket or accept JSON identity from the plugin.
+                let user = match self.calls.verify(ticket, now) {
+                    Ok(user) => {
+                        if source_manifest
+                            .event_subscriptions
+                            .iter()
+                            .any(|s| s.operation == user.operation)
+                        {
+                            return Err(denied());
+                        }
+                        user
+                    }
+                    Err(_) => {
+                        let event = self
+                            .calls
+                            .verify_event_origin(ticket, now)
+                            .map_err(|_| denied())?;
+                        source
+                            .authorize_event(
+                                crate::protocol::event::MESSAGE_CREATED,
+                                &event.operation,
+                                &event.actor_id,
+                                now,
+                            )
+                            .map_err(|_| denied())?;
+                        // Internal adaptation only: this object is never signed or returned as a user credential.
+                        crate::protocol::invocation::PluginCallClaims {
+                            tenant_id: event.tenant_id,
+                            plugin_id: event.plugin_id,
+                            plugin_version: event.plugin_version,
+                            manifest_digest: event.manifest_digest,
+                            deployment_id: event.deployment_id,
+                            grant_id: event.grant_id,
+                            grant_revision: event.grant_revision,
+                            configuration_digest: event.configuration_digest,
+                            actor_id: event.actor_id,
+                            operation: event.operation,
+                            request_id: event.event_id,
+                            conversation_id: Some(event.conversation_id),
+                            issued_at_ms: event.issued_at_ms,
+                            expires_at_ms: event.expires_at_ms,
+                        }
+                    }
+                };
                 if user.tenant_id != runtime.tenant_id
                     || user.plugin_id != runtime.plugin_id
                     || user.plugin_version != runtime.plugin_version
@@ -214,6 +270,7 @@ impl PluginServiceRouter {
                     .map_err(|_| denied())?;
                 (
                     Some(user.actor_id),
+                    user.conversation_id,
                     Some(user.operation),
                     user.request_id,
                     user.expires_at_ms.min(runtime.expires_at_ms),
@@ -248,13 +305,20 @@ impl PluginServiceRouter {
                 if request.mode != ServiceMode::Recovery || !approved {
                     return Err(denied());
                 }
-                (None, None, request_id.to_owned(), runtime.expires_at_ms)
+                (
+                    None,
+                    None,
+                    None,
+                    request_id.to_owned(),
+                    runtime.expires_at_ms,
+                )
             };
         let claims = PluginServiceClaims {
             tenant_id: runtime.tenant_id,
             source: ServicePrincipal::projected(source),
             target: ServicePrincipal::projected(target),
             actor_id: actor,
+            conversation_id: conversation,
             origin_operation: origin,
             mode: request.mode,
             operation: request.operation.clone(),
@@ -346,6 +410,27 @@ pub struct ServiceRecoveryScope<'a> {
     pub grant_id: &'a str,
 }
 impl crate::resource::HostResourceClient {
+    /// Delegate an event-derived actor, without manufacturing an ordinary user invocation.
+    pub async fn call_service_event(
+        &self,
+        runtime: &PluginRuntimeHost,
+        caller: &crate::VerifiedPluginEvent,
+        target: &str,
+        operation: &str,
+        business_ref: &str,
+        input: Value,
+    ) -> Result<PluginServiceResponse, Status> {
+        let request = PluginServiceRequest {
+            target_plugin_id: target.into(),
+            operation: operation.into(),
+            business_ref: business_ref.into(),
+            mode: ServiceMode::User,
+            actor_ticket: Some(caller.delegation.to_string()),
+            input,
+        };
+        self.send_service(runtime, caller.tenant_id(), caller.grant_id(), request)
+            .await
+    }
     pub async fn call_service(
         &self,
         runtime: &PluginRuntimeHost,

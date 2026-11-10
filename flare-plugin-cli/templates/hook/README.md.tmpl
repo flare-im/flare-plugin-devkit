@@ -1,0 +1,16 @@
+# {{name}}
+
+A `pre_send` hook service: Flare calls it before a message is stored, and it allows, rewrites or
+refuses the message. It is a separate process, so Flare needs no rebuild.
+
+```sh
+cargo run
+```
+
+It listens on `127.0.0.1:7801`; set `HOOK_ADDR` to change that. `protoc` must be on PATH to build.
+
+Copy `hooks.toml` into the server's `config/hooks.toml` to deploy it, or enter the same endpoint in
+the console for a platform or application hook. `require_success = true` makes it required: messages
+get a retryable error while the service is down. With `false`, Flare skips it then.
+
+Put your rule in `Hook::pre_send` in `src/main.rs`.

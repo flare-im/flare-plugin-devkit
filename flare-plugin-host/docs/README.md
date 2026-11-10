@@ -19,8 +19,8 @@ cargo add flare-plugin-host
 ```
 
 1. 实现 `ExtensionPlugin.Call`：一个 RPC，`(operation, JSON) -> JSON`。
-2. 启动后 `announce()`：声明你能处理的全部 operation，以及计费单位。
-3. 平台把你记进路由簿；声明之外的调用到不了你的进程。
+2. 运维把部署登记到 Core；Manifest 声明的 operation 就是调用面。
+3. 租户安装后 Core 下发状态；声明之外的调用到不了你的进程。
 
 三步的每一步都有一个不报错的失败方式，文档里逐条标了出来 ——
-这也是为什么建议用 `flare-plugin-host` 而不是手写注册调用。
+这也是为什么建议用 `flare-plugin-host` 而不是手写票据校验。

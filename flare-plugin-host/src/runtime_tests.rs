@@ -1,22 +1,19 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use ed25519_dalek::{
-    Signer, SigningKey,
-    pkcs8::{EncodePrivateKey, EncodePublicKey},
-};
+use ed25519_dalek::{Signer, SigningKey};
 use flare_plugin_protocol::{
-    invocation::{PluginCallClaims, PluginCallSigner},
+    invocation::{PluginCallClaims, PluginCallSigner, PluginDataClaims},
     signature::PublisherTrustStore,
 };
 use serde_json::json;
 
-fn fixture() -> (PluginRuntimeHost, TokenService, PluginCallSigner) {
+fn fixture() -> (PluginRuntimeHost, PluginCallSigner) {
     fixture_with_store(Arc::new(crate::state_store::MemoryStore::default()))
 }
 fn fixture_with_store(
     store: Arc<dyn crate::state_store::TenantStateStore>,
-) -> (PluginRuntimeHost, TokenService, PluginCallSigner) {
-    let raw=serde_json::to_vec(&json!({"manifestVersion":1,"pluginId":"example.echo","version":"1.0.0","apiVersion":"1.0","displayName":"Echo","publisher":{"publisherId":"test","displayName":"Test"},"runtime":{"kind":"grpc","service":"example.echo.v1.PluginService","protocol":"flare.capability.v1"},"capabilities":[{"id":"example.echo","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":[],"idempotent":true,"timeoutMs":1000}]}],"permissions":[],"artifact":{"digest":format!("sha256:{}","a".repeat(64)),"signatureRef":"test"}})).unwrap();
+) -> (PluginRuntimeHost, PluginCallSigner) {
+    let raw=serde_json::to_vec(&json!({"manifestVersion":1,"pluginId":"example.echo","version":"1.0.0","apiVersion":"1.0","displayName":"Echo","publisher":{"publisherId":"test","displayName":"Test"},"runtime":{"kind":"grpc","service":"example.echo.v1.PluginService","protocol":"flare.capability.v1"},"capabilities":[{"id":"example.echo","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":[],"idempotent":true,"timeoutMs":1000}]}],"permissions":[],"features":[{"id":"run","label":{"en-US":"Run"},"gates":{"operations":["example.echo.run"]}}],"artifact":{"digest":format!("sha256:{}","a".repeat(64)),"signatureRef":"test"}})).unwrap();
     let publisher = SigningKey::from_bytes(&[61; 32]);
     let mut trust = PublisherTrustStore::default();
     trust
@@ -41,13 +38,6 @@ fn fixture_with_store(
         artifact_digest: format!("sha256:{}", "a".repeat(64)),
         grpc_authority: "http://127.0.0.1:7901".into(),
     };
-    let key = SigningKey::from_bytes(&[62; 32]);
-    let issuer = TokenService::from_ed25519_private_key(
-        &key.to_pkcs8_pem(Default::default()).unwrap(),
-        "flare-platform",
-        60,
-    )
-    .unwrap();
     let calls = PluginCallSigner::new("call-key".into(), [63; 32]).unwrap();
     let mut verifier = PluginCallVerifier::default();
     verifier
@@ -56,9 +46,6 @@ fn fixture_with_store(
     let host = PluginRuntimeHost::new(
         manifest,
         deployment,
-        &key.verifying_key()
-            .to_public_key_pem(Default::default())
-            .unwrap(),
         verifier,
         Arc::new(|value| {
             if value.get("reject").is_some() {
@@ -70,7 +57,7 @@ fn fixture_with_store(
         store,
     )
     .unwrap();
-    (host, issuer, calls)
+    (host, calls)
 }
 fn state(host: &PluginRuntimeHost, revision: u64, enabled: bool) -> PluginTenantState {
     PluginTenantState {
@@ -90,38 +77,17 @@ fn state(host: &PluginRuntimeHost, revision: u64, enabled: bool) -> PluginTenant
         data_scopes: Vec::new(),
     }
 }
-fn assertion(
-    issuer: &TokenService,
-    state: PluginTenantState,
-    tenant: &str,
-    subject: &str,
-    audience: &str,
-) -> Request<PluginTenantState> {
-    let token = issuer
-        .generate_with_ed25519(subject, Some(tenant), "control", audience)
-        .unwrap();
-    let mut req = Request::new(state);
-    req.metadata_mut()
-        .insert("authorization", format!("Bearer {token}").parse().unwrap());
-    req
-}
-fn signed(issuer: &TokenService, state: PluginTenantState) -> Request<PluginTenantState> {
-    assertion(
-        issuer,
-        state,
-        "201",
-        "flare-platform-worker",
-        "flare-plugin-runtime:echo-1:org-1",
-    )
+fn signed(calls: &PluginCallSigner, state: PluginTenantState) -> Request<PluginTenantState> {
+    tenant_state_request(calls, state).unwrap()
 }
 
 #[tokio::test]
 async fn background_upgrade_resolves_only_this_deployments_current_tenant_grant() {
     let memory = Arc::new(crate::state_store::MemoryStore::default());
-    let (host, issuer, calls) = fixture_with_store(memory.clone());
+    let (host, calls) = fixture_with_store(memory.clone());
     let mut current = state(&host, 1, true);
     current.grant_id = "new-installation".into();
-    host.apply_tenant(signed(&issuer, current.clone()))
+    host.apply_tenant(signed(&calls, current.clone()))
         .await
         .unwrap();
     assert_eq!(
@@ -150,7 +116,7 @@ async fn background_upgrade_resolves_only_this_deployments_current_tenant_grant(
 
     current.enabled = false;
     current.revision = 2;
-    host.apply_tenant(signed(&issuer, current.clone()))
+    host.apply_tenant(signed(&calls, current.clone()))
         .await
         .unwrap();
     assert!(
@@ -181,12 +147,12 @@ async fn background_upgrade_resolves_only_this_deployments_current_tenant_grant(
     );
     current.enabled = true;
     current.revision = 3;
-    host.apply_tenant(signed(&issuer, current.clone()))
+    host.apply_tenant(signed(&calls, current.clone()))
         .await
         .unwrap();
     let mut other = current;
     other.grant_id = "ambiguous-installation".into();
-    host.apply_tenant(signed(&issuer, other)).await.unwrap();
+    host.apply_tenant(signed(&calls, other)).await.unwrap();
     assert!(
         host.current_grant_id("201", "old-installation", true)
             .await
@@ -230,13 +196,13 @@ fn invocation(
 #[tokio::test]
 async fn installation_configuration_enable_disable_and_stale_replay_are_fenced() {
     let memory = Arc::new(crate::state_store::MemoryStore::default());
-    let (host, issuer, calls) = fixture_with_store(memory.clone());
+    let (host, calls) = fixture_with_store(memory.clone());
     assert!(
         host.verify_call(&invocation(&host, &calls, 1))
             .await
             .is_err()
     );
-    host.apply_tenant(signed(&issuer, state(&host, 1, false)))
+    host.apply_tenant(signed(&calls, state(&host, 1, false)))
         .await
         .unwrap();
     assert!(
@@ -244,7 +210,7 @@ async fn installation_configuration_enable_disable_and_stale_replay_are_fenced()
             .await
             .is_err()
     );
-    host.apply_tenant(signed(&issuer, state(&host, 2, true)))
+    host.apply_tenant(signed(&calls, state(&host, 2, true)))
         .await
         .unwrap();
     assert_eq!(
@@ -254,15 +220,15 @@ async fn installation_configuration_enable_disable_and_stale_replay_are_fenced()
             .tenant_id,
         "201"
     );
-    host.apply_tenant(signed(&issuer, state(&host, 2, true)))
+    host.apply_tenant(signed(&calls, state(&host, 2, true)))
         .await
         .unwrap();
     assert!(
-        host.apply_tenant(signed(&issuer, state(&host, 2, false)))
+        host.apply_tenant(signed(&calls, state(&host, 2, false)))
             .await
             .is_err()
     );
-    host.apply_tenant(signed(&issuer, state(&host, 3, false)))
+    host.apply_tenant(signed(&calls, state(&host, 3, false)))
         .await
         .unwrap();
     assert!(
@@ -271,7 +237,7 @@ async fn installation_configuration_enable_disable_and_stale_replay_are_fenced()
             .is_err()
     );
     assert!(
-        host.apply_tenant(signed(&issuer, state(&host, 2, true)))
+        host.apply_tenant(signed(&calls, state(&host, 2, true)))
             .await
             .is_err()
     );
@@ -285,51 +251,54 @@ async fn installation_configuration_enable_disable_and_stale_replay_are_fenced()
         .unwrap()
         .valid_until_ms = 1;
     assert!(
-        host.apply_tenant(signed(&issuer, state(&host, 2, true)))
+        host.apply_tenant(signed(&calls, state(&host, 2, true)))
             .await
             .is_err()
     );
 }
 #[tokio::test]
 async fn runtime_rejects_wrong_principal_audience_tenant_and_digest() {
-    let (host, issuer, _) = fixture();
-    for (tenant, subject, audience) in [
-        (
-            "202",
-            "flare-platform-worker",
-            "flare-plugin-runtime:echo-1:org-1",
-        ),
-        ("201", "employee", "flare-plugin-runtime:echo-1:org-1"),
-        ("201", "flare-platform-worker", "flare-core-projection"),
+    let (host, calls) = fixture();
+    // A ticket covers exactly the state it names.
+    for change in [
+        (|s: &mut PluginTenantState| s.app_id = "202".into()) as fn(&mut PluginTenantState),
+        |s| s.organization_id = "org-2".into(),
+        |s| s.revision = 2,
+        |s| s.enabled = false,
+        |s| s.grant_id = "other".into(),
     ] {
-        assert!(
-            host.apply_tenant(assertion(
-                &issuer,
-                state(&host, 1, true),
-                tenant,
-                subject,
-                audience
-            ))
-            .await
-            .is_err()
+        let mut req = signed(&calls, state(&host, 1, true));
+        change(req.get_mut());
+        assert_eq!(
+            host.apply_tenant(req).await.err().map(|e| e.code()),
+            Some(tonic::Code::PermissionDenied)
         );
     }
+    // A key this deployment has not been given yet: Core rotated first and retries.
+    let rotated = PluginCallSigner::new("rotated-key".into(), [91; 32]).unwrap();
+    assert_eq!(
+        host.apply_tenant(signed(&rotated, state(&host, 1, true)))
+            .await
+            .err()
+            .map(|e| e.code()),
+        Some(tonic::Code::Unavailable)
+    );
     let mut bad = state(&host, 1, true);
     bad.configuration_json = b"{\"reject\":true}".to_vec();
     bad.configuration_digest = configuration_digest(&json!({"reject":true})).unwrap();
-    assert!(host.apply_tenant(signed(&issuer, bad)).await.is_err());
+    assert!(host.apply_tenant(signed(&calls, bad)).await.is_err());
     let mut bad = state(&host, 1, true);
     bad.configuration_digest = format!("sha256:{}", "b".repeat(64));
-    assert!(host.apply_tenant(signed(&issuer, bad)).await.is_err());
-    let mut req = signed(&issuer, state(&host, 1, true));
-    let auth = req.metadata().get("authorization").unwrap().clone();
-    req.metadata_mut().append("authorization", auth);
+    assert!(host.apply_tenant(signed(&calls, bad)).await.is_err());
+    let mut req = signed(&calls, state(&host, 1, true));
+    let auth = req.metadata().get(PLUGIN_CALL_HEADER).unwrap().clone();
+    req.metadata_mut().append(PLUGIN_CALL_HEADER, auth);
     assert!(host.apply_tenant(req).await.is_err());
 }
 #[tokio::test]
 async fn invocation_requires_dedicated_ticket_and_current_config_and_body_bindings() {
-    let (host, issuer, calls) = fixture();
-    host.apply_tenant(signed(&issuer, state(&host, 1, true)))
+    let (host, calls) = fixture();
+    host.apply_tenant(signed(&calls, state(&host, 1, true)))
         .await
         .unwrap();
     // A ticket that does not match its call is refused for good.
@@ -367,7 +336,7 @@ async fn invocation_requires_dedicated_ticket_and_current_config_and_body_bindin
     let mut update = state(&host, 2, true);
     update.configuration_json = serde_json::to_vec(&changed).unwrap();
     update.configuration_digest = configuration_digest(&changed).unwrap();
-    host.apply_tenant(signed(&issuer, update)).await.unwrap();
+    host.apply_tenant(signed(&calls, update)).await.unwrap();
     // Core signed under the previous revision: the projections have not converged yet, so the
     // call did not run and Core may answer "outcome unknown" instead of a rejection.
     assert_eq!(
@@ -384,21 +353,21 @@ async fn invocation_requires_dedicated_ticket_and_current_config_and_body_bindin
 #[tokio::test]
 async fn shared_replica_and_restart_preserve_fences_and_lease_expiry_denies_calls() {
     let memory = Arc::new(crate::state_store::MemoryStore::default());
-    let (host, issuer, calls) = fixture_with_store(memory.clone());
-    host.apply_tenant(signed(&issuer, state(&host, 1, true)))
+    let (host, calls) = fixture_with_store(memory.clone());
+    host.apply_tenant(signed(&calls, state(&host, 1, true)))
         .await
         .unwrap();
     let ticket = invocation(&host, &calls, 1);
     assert!(host.verify_call(&ticket).await.is_ok());
-    let (fresh, _, _) = fixture_with_store(memory.clone());
+    let (fresh, _) = fixture_with_store(memory.clone());
     assert!(fresh.verify_call(&ticket).await.is_ok());
     fresh
-        .apply_tenant(signed(&issuer, state(&host, 2, false)))
+        .apply_tenant(signed(&calls, state(&host, 2, false)))
         .await
         .unwrap();
     assert!(host.verify_call(&ticket).await.is_err());
     assert!(
-        host.apply_tenant(signed(&issuer, state(&host, 1, true)))
+        host.apply_tenant(signed(&calls, state(&host, 1, true)))
             .await
             .is_err()
     );
@@ -415,20 +384,20 @@ async fn shared_replica_and_restart_preserve_fences_and_lease_expiry_denies_call
 
 #[tokio::test]
 async fn disabled_preparation_validates_config_but_emergency_deny_remains_available() {
-    let (host, issuer, _) = fixture();
+    let (host, calls) = fixture();
     let mut invalid = state(&host, 1, false);
     let config = json!({"reject":true});
     invalid.configuration_json = serde_json::to_vec(&config).unwrap();
     invalid.configuration_digest = configuration_digest(&config).unwrap();
     assert!(
-        host.apply_tenant(signed(&issuer, invalid.clone()))
+        host.apply_tenant(signed(&calls, invalid.clone()))
             .await
             .is_err()
     );
     invalid.validate_configuration = false;
     assert!(
         !host
-            .apply_tenant(signed(&issuer, invalid))
+            .apply_tenant(signed(&calls, invalid))
             .await
             .unwrap()
             .into_inner()
@@ -438,8 +407,8 @@ async fn disabled_preparation_validates_config_but_emergency_deny_remains_availa
 
 #[tokio::test]
 async fn drain_tracks_cloned_admission_and_cancellation() {
-    let (host, issuer, calls) = fixture();
-    host.apply_tenant(signed(&issuer, state(&host, 1, true)))
+    let (host, calls) = fixture();
+    host.apply_tenant(signed(&calls, state(&host, 1, true)))
         .await
         .unwrap();
     let admitted = host
@@ -491,11 +460,11 @@ async fn postgres_replicas_restart_durable_tombstones_and_concurrent_revision() 
     let store = Arc::new(PostgresTenantStateStore::new(
         sqlx::PgPool::connect_with(options.clone()).await.unwrap(),
     ));
-    let (a, issuer, calls) = fixture_with_store(store.clone());
-    let (b, _, _) = fixture_with_store(Arc::new(PostgresTenantStateStore::new(
+    let (a, calls) = fixture_with_store(store.clone());
+    let (b, _) = fixture_with_store(Arc::new(PostgresTenantStateStore::new(
         sqlx::PgPool::connect_with(options.clone()).await.unwrap(),
     )));
-    a.apply_tenant(signed(&issuer, state(&a, 1, true)))
+    a.apply_tenant(signed(&calls, state(&a, 1, true)))
         .await
         .unwrap();
     let active = b.verify_call(&invocation(&b, &calls, 1)).await.unwrap();
@@ -504,8 +473,8 @@ async fn postgres_replicas_restart_durable_tombstones_and_concurrent_revision() 
     let newer = state(&a, 3, false);
     let middle = state(&a, 2, true);
     let _ = tokio::join!(
-        a.apply_tenant(signed(&issuer, middle)),
-        b.apply_tenant(signed(&issuer, newer))
+        a.apply_tenant(signed(&calls, middle)),
+        b.apply_tenant(signed(&calls, newer))
     );
     assert_eq!(
         store
@@ -517,7 +486,7 @@ async fn postgres_replicas_restart_durable_tombstones_and_concurrent_revision() 
         3
     );
     assert!(a.verify_call(&invocation(&a, &calls, 1)).await.is_err());
-    assert!(a.apply_tenant(signed(&issuer, old.clone())).await.is_err());
+    assert!(a.apply_tenant(signed(&calls, old.clone())).await.is_err());
     assert!(
         store
             .get("echo-1", "202", "grant-1")
@@ -530,10 +499,10 @@ async fn postgres_replicas_restart_durable_tombstones_and_concurrent_revision() 
     drop(a);
     drop(b);
     drop(store);
-    let (restarted, _, _) = fixture_with_store(Arc::new(PostgresTenantStateStore::new(
+    let (restarted, _) = fixture_with_store(Arc::new(PostgresTenantStateStore::new(
         sqlx::PgPool::connect_with(options).await.unwrap(),
     )));
-    assert!(restarted.apply_tenant(signed(&issuer, old)).await.is_err());
+    assert!(restarted.apply_tenant(signed(&calls, old)).await.is_err());
     assert!(
         restarted
             .verify_call(&invocation(&restarted, &calls, 1))
@@ -545,8 +514,8 @@ async fn postgres_replicas_restart_durable_tombstones_and_concurrent_revision() 
 #[tokio::test]
 async fn data_tickets_bind_purpose_body_grant_and_revision() {
     use flare_plugin_protocol::data::*;
-    let (host, issuer, _) = fixture();
-    host.apply_tenant(signed(&issuer, state(&host, 1, false)))
+    let (host, calls) = fixture();
+    host.apply_tenant(signed(&calls, state(&host, 1, false)))
         .await
         .unwrap();
     let data = DataRequest {
@@ -559,12 +528,20 @@ async fn data_tickets_bind_purpose_body_grant_and_revision() {
         fence: 1,
         action: DataAction::Export,
     };
-    let token = issuer
-        .generate_with_ed25519(
-            "flare-platform-worker",
-            Some("201"),
-            TOKEN_USE,
-            &data.audience().unwrap(),
+    let now = now_ms();
+    let token = calls
+        .sign_data(
+            &PluginDataClaims {
+                tenant_id: data.app_id.clone(),
+                deployment_id: data.deployment_id.clone(),
+                manifest_digest: data.manifest_digest.clone(),
+                grant_id: data.grant_id.clone(),
+                grant_revision: data.grant_revision,
+                request_digest: data.digest().unwrap(),
+                issued_at_ms: now,
+                expires_at_ms: now + 30_000,
+            },
+            now,
         )
         .unwrap();
     let request = |data: &DataRequest, token: &str| {
@@ -578,7 +555,7 @@ async fn data_tickets_bind_purpose_body_grant_and_revision() {
             ..Default::default()
         });
         req.metadata_mut()
-            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+            .insert(PLUGIN_CALL_HEADER, token.parse().unwrap());
         req
     };
     host.verify_data_request(&request(&data, &token))
@@ -607,12 +584,22 @@ async fn data_tickets_bind_purpose_body_grant_and_revision() {
                 .is_err()
         );
     }
-    let wrong = issuer
-        .generate_with_ed25519(
-            "flare-platform-worker",
-            Some("201"),
-            "control",
-            "flare-plugin-runtime:echo-1:org-1",
+    // A ticket of another kind, for the same tenant, is not a data ticket.
+    let wrong = calls
+        .sign_tenant_state(
+            &PluginTenantStateClaims {
+                tenant_id: "201".into(),
+                organization_id: "org-1".into(),
+                deployment_id: data.deployment_id.clone(),
+                manifest_digest: data.manifest_digest.clone(),
+                grant_id: data.grant_id.clone(),
+                revision: 1,
+                configuration_digest: configuration_digest(&json!({})).unwrap(),
+                enabled: false,
+                issued_at_ms: now,
+                expires_at_ms: now + 30_000,
+            },
+            now,
         )
         .unwrap();
     assert!(
@@ -620,7 +607,7 @@ async fn data_tickets_bind_purpose_body_grant_and_revision() {
             .await
             .is_err()
     );
-    host.apply_tenant(signed(&issuer, state(&host, 2, false)))
+    host.apply_tenant(signed(&calls, state(&host, 2, false)))
         .await
         .unwrap();
     assert!(
@@ -632,13 +619,13 @@ async fn data_tickets_bind_purpose_body_grant_and_revision() {
 
 #[tokio::test]
 async fn inspect_reports_the_data_protocol_only_when_the_binary_declares_it() {
-    let (host, _, _) = fixture();
+    let (host, _) = fixture();
     let plain = PluginRuntime::inspect(&host, Request::new(PluginRuntimeInspectRequest {}))
         .await
         .unwrap()
         .into_inner();
     assert!(plain.protocols.is_empty());
-    let (host, _, _) = fixture();
+    let (host, _) = fixture();
     let host = host.with_data_protocol().unwrap();
     let info = PluginRuntime::inspect(&host, Request::new(PluginRuntimeInspectRequest {}))
         .await

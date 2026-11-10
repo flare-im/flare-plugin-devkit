@@ -48,13 +48,13 @@ pub(crate) mod fixture {
     use super::*;
     use crate::state_store::MemoryStore;
     use base64::{Engine, engine::general_purpose::STANDARD};
-    use ed25519_dalek::{Signer, SigningKey, pkcs8::EncodePublicKey};
+    use ed25519_dalek::{Signer, SigningKey};
     use flare_plugin_protocol::signature::PublisherTrustStore;
     use serde_json::json;
 
     /// The host and its store.
     pub(crate) fn host_with_store() -> (PluginRuntimeHost, Arc<MemoryStore>) {
-        let raw = serde_json::to_vec(&json!({"manifestVersion":1,"pluginId":"example.echo","version":"1.0.0","apiVersion":"1.0","displayName":"Echo","publisher":{"publisherId":"test","displayName":"Test"},"runtime":{"kind":"grpc","service":"example.echo.v1.PluginService","protocol":"flare.capability.v1"},"capabilities":[{"id":"example.echo","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":[],"idempotent":true,"timeoutMs":1000}]}],"permissions":[],"artifact":{"digest":format!("sha256:{}","a".repeat(64)),"signatureRef":"test"}})).unwrap();
+        let raw = serde_json::to_vec(&json!({"manifestVersion":1,"pluginId":"example.echo","version":"1.0.0","apiVersion":"1.0","displayName":"Echo","publisher":{"publisherId":"test","displayName":"Test"},"runtime":{"kind":"grpc","service":"example.echo.v1.PluginService","protocol":"flare.capability.v1"},"capabilities":[{"id":"example.echo","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":[],"idempotent":true,"timeoutMs":1000}]}],"permissions":[],"features":[{"id":"run","label":{"en-US":"Run"},"gates":{"operations":["example.echo.run"]}}],"artifact":{"digest":format!("sha256:{}","a".repeat(64)),"signatureRef":"test"}})).unwrap();
         let publisher = SigningKey::from_bytes(&[91; 32]);
         let mut trust = PublisherTrustStore::default();
         trust
@@ -79,15 +79,10 @@ pub(crate) mod fixture {
             artifact_digest: format!("sha256:{}", "a".repeat(64)),
             grpc_authority: "http://127.0.0.1:7901".into(),
         };
-        let platform = SigningKey::from_bytes(&[92; 32])
-            .verifying_key()
-            .to_public_key_pem(Default::default())
-            .unwrap();
         let store = Arc::new(MemoryStore::default());
         let host = PluginRuntimeHost::new(
             manifest,
             deployment,
-            &platform,
             flare_plugin_protocol::invocation::PluginCallVerifier::default(),
             Arc::new(|_| Ok(())),
             store.clone(),

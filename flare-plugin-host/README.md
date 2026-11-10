@@ -2,7 +2,7 @@
 
 English · [中文](README.zh-CN.md)
 
-The endpoint SDK for Flare plugins: validates declarations, derives them from publisher-verified platform manifests, announces gRPC endpoints and withdraws them during shutdown. Registration, platform deployment and tenant approval are separate operations.
+The process SDK for Flare plugins: serves the tenant state Core delivers, verifies the tickets Core signs, and reaches host capabilities. A plugin process never registers itself: the operator registers its deployment with Core.
 
 ## Installation
 
@@ -12,27 +12,9 @@ flare-plugin-host = "0.1.1"
 
 ## Shared runtime
 
-`PluginRuntimeHost` serves the existing listener's `PluginRuntime` control service, validates platform worker assertions and tenant configuration, and fences invocation tickets by deployment, app, grant revision and configuration digest. `verify_user_call(...).await` returns the admitted identity and configuration snapshot. Production state is PostgreSQL-backed, shared across replicas and restart durable; no positive authorization cache or in-memory production fallback is used. No Cell/private platform key or endpoint self-registration is required. Register the immutable shared deployment with the platform, then apply/approve/configure/enable per app. See [Echo runtime reference](docs/echo-plugin.md) for explicit schema/role provisioning, drain and lease limits.
+`PluginRuntimeHost` serves the existing listener's `PluginRuntime` control service, validates Core tenant state tickets and tenant configuration, and fences invocation tickets by deployment, app, grant revision and configuration digest. `verify_user_call(...).await` returns the admitted identity and configuration snapshot. Production state is PostgreSQL-backed, shared across replicas and restart durable; no positive authorization cache or in-memory production fallback is used. No Cell/private platform key or endpoint self-registration is required. Register the immutable shared deployment with the platform, then apply/approve/configure/enable per app. See [Echo runtime reference](docs/echo-plugin.md) for explicit schema/role provisioning, drain and lease limits.
 
-## Diagnostic registration contract
-
-`PluginDeclaration` requires one concrete tenant, plugin id, entry capability, address, semantic plugin version, API version `1.0`, a lowercase 64-character manifest SHA-256 and a nonempty unique operation list containing the entry capability. Core repeats validation. Incomplete, undeclared and unverified instances cannot receive calls.
-
-Prefer `PluginDeclaration::from_manifest` with a publisher-verified `protocol::signature::VerifiedManifest`. Address and tenant are host configuration, outside the published manifest.
-
-```rust
-use flare_plugin_host::{PluginDeclaration, HostError, protocol::signature::VerifiedManifest};
-
-fn declaration(manifest: &VerifiedManifest) -> Result<PluginDeclaration, HostError> {
-    PluginDeclaration::from_manifest("tenant-a".into(), "plugin.internal:9000".into(), manifest)
-}
-```
-
-## Registration credentials
-
-Third-party hosts use `PluginHost::connect_with_workload` (or a custom `RegistrationTokenProvider`). `workload::WorkloadTokenProvider` reopens an operator-provisioned projected token for every exchange, including after kubelet file rotation. The broker in the existing Social platform authenticates with Kubernetes TokenReview, checks the exact service-account name and UID, immutable deployment and approved tenant installation, then returns a 60-second credential bound to the complete registration RPC body. Core accepts it only in the register/deregister RPCs via `x-flare-plugin-registration`; it is never a Cell context. Plugins receive no platform/Cell signing key. The broker is optional for platform-projected endpoint discovery and never participates in business dispatch. Ask your platform operator for the broker endpoint and workload settings.
-
-Trusted first-party composition may use `connect_with_signer`/`signer_from_env`; never mount that root signing key into an untrusted plugin. Core binds service registration to its signed plugin identity, tenant and request id. Missing credentials fail locally; cross-plugin registration/withdrawal is denied.
+## Tickets
 
 For business calls, use `verify_user_call(request, &runtime)` to verify the independent `x-flare-plugin-call` ticket against the current acknowledged tenant state. The original Cell `x-flare-ctx` is never a business-call credential for this runtime. Enforce resource permissions in the business handler. `GenericRequest.metadata` is informational and must not establish tenant/user identity. Publisher signature verification and artifact trust are independent checks. `announce` does not grant tenant approval or bypass user operation permissions.
 

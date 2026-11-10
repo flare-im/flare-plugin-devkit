@@ -2,7 +2,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{
     Signer, SigningKey,
-    pkcs8::{EncodePrivateKey, EncodePublicKey},
 };
 use flare_grpc_proto::capability::{
     GenericRequest, PluginTenantState, extension_plugin_client::ExtensionPluginClient,
@@ -16,7 +15,6 @@ use flare_plugin_protocol::{
     signature::PublisherTrustStore,
 };
 use flare_plugin_wasm::{ABI_VERSION, WasmSandbox, service::WasmPluginService};
-use flare_server_core::TokenService;
 use serde_json::{Value, json};
 use std::{
     sync::Arc,
@@ -33,8 +31,6 @@ fn now() -> i64 {
 struct Fixture {
     manifest: flare_plugin_protocol::signature::VerifiedManifest,
     sandbox: Arc<WasmSandbox>,
-    issuer: TokenService,
-    platform_public: String,
     calls: PluginCallSigner,
 }
 impl Fixture {
@@ -45,7 +41,7 @@ impl Fixture {
             (func (export "flare_validate") (param i32 i32) (result i32) i32.const 0)
             (func (export "flare_call") (param $p i32) (param $n i32) (result i64)
                 (i64.or (i64.shl (i64.extend_i32_u (local.get $p)) (i64.const 32)) (i64.extend_i32_u (local.get $n)))))"#).unwrap();
-        let raw = serde_json::to_vec(&json!({"manifestVersion":1,"pluginId":"fixture.wasm","version":"1.0.0","apiVersion":"1.0","displayName":"WASM lifecycle fixture","publisher":{"publisherId":"fixture","displayName":"Fixture"},"runtime":{"kind":"wasm","module":"fixture.wasm","abiVersion":ABI_VERSION,"maxMemoryPages":2,"maxFuel":100000},"capabilities":[{"id":"fixture.wasm","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":[],"timeoutMs":2000,"idempotent":true}]}],"permissions":[],"artifact":{"digest":digest_bytes(&bytes),"signatureRef":"fixture"}})).unwrap();
+        let raw = serde_json::to_vec(&json!({"manifestVersion":1,"pluginId":"fixture.wasm","version":"1.0.0","apiVersion":"1.0","displayName":"WASM lifecycle fixture","publisher":{"publisherId":"fixture","displayName":"Fixture"},"runtime":{"kind":"wasm","module":"fixture.wasm","abiVersion":ABI_VERSION,"maxMemoryPages":2,"maxFuel":100000},"capabilities":[{"id":"fixture.wasm","operations":[{"id":"run","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"permissionIds":[],"timeoutMs":2000,"idempotent":true}]}],"permissions":[],"features":[{"id":"run","label":{"en-US":"Run"},"gates":{"operations":["fixture.wasm.run"]}}],"artifact":{"digest":digest_bytes(&bytes),"signatureRef":"fixture"}})).unwrap();
         let publisher = SigningKey::from_bytes(&[81; 32]);
         let mut trust = PublisherTrustStore::default();
         trust
@@ -63,21 +59,9 @@ impl Fixture {
             )
             .unwrap();
         let sandbox = Arc::new(WasmSandbox::new(&manifest, &bytes).unwrap());
-        let platform = SigningKey::from_bytes(&[82; 32]);
-        let issuer = TokenService::from_ed25519_private_key(
-            &platform.to_pkcs8_pem(Default::default()).unwrap(),
-            "flare-platform",
-            60,
-        )
-        .unwrap();
         Self {
             manifest,
             sandbox,
-            issuer,
-            platform_public: platform
-                .verifying_key()
-                .to_public_key_pem(Default::default())
-                .unwrap(),
             calls: PluginCallSigner::new("wasm-fixture".into(), [83; 32]).unwrap(),
         }
     }
@@ -104,7 +88,6 @@ impl Fixture {
                     .clone(),
                 grpc_authority: "http://127.0.0.1:7903".into(),
             },
-            &self.platform_public,
             verifier,
             Arc::new(move |value| {
                 sandbox
@@ -135,20 +118,7 @@ impl Fixture {
         }
     }
     fn control(&self, state: PluginTenantState) -> Request<PluginTenantState> {
-        let token = self
-            .issuer
-            .generate_with_ed25519(
-                "flare-platform-worker",
-                Some(&state.app_id),
-                "control",
-                "flare-plugin-runtime:wasm-1:org-1",
-            )
-            .unwrap();
-        let mut request = Request::new(state);
-        request
-            .metadata_mut()
-            .insert("authorization", format!("Bearer {token}").parse().unwrap());
-        request
+        flare_plugin_host::tenant_state_request(&self.calls, state).unwrap()
     }
     fn call(&self, tenant: &str, revision: u64) -> Request<GenericRequest> {
         let state = self.state(tenant, revision, true);

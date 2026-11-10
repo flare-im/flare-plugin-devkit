@@ -34,6 +34,14 @@
         }
       ]
     },
+    "assets": {
+      "description": "Digest table of the package's `assets/` files, covered by the\npublisher signature (see [`crate::package`]).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PluginAsset"
+      },
+      "maxItems": 64
+    },
     "capabilities": {
       "type": "array",
       "items": {
@@ -71,6 +79,22 @@
     "displayName": {
       "type": "string"
     },
+    "displayNameI18n": {
+      "description": "Publisher-owned display names per locale (`zh-CN`, `en-US`): at most\n16 entries of 160 UTF-8 bytes each. Hosts use `displayName` when the\nrequested language is unavailable.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 16
+    },
+    "eventSubscriptions": {
+      "description": "Core observations delivered asynchronously, after approval of their permissions/scopes.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PluginEventSubscription"
+      },
+      "maxItems": 32
+    },
     "events": {
       "type": "array",
       "default": [],
@@ -78,12 +102,13 @@
         "$ref": "#/$defs/PluginEvent"
       }
     },
-    "hooks": {
+    "features": {
+      "description": "What an application can publish separately. A plugin with user\noperations declares at least one (see [`PluginFeature`]).",
       "type": "array",
-      "default": [],
       "items": {
-        "$ref": "#/$defs/PluginHook"
-      }
+        "$ref": "#/$defs/PluginFeature"
+      },
+      "maxItems": 64
     },
     "hostVersionRange": {
       "type": [
@@ -377,6 +402,10 @@
         "requiresReason": {
           "description": "The console asks the staff member for a reason; Core records it in the\naudit with the call.",
           "type": "boolean"
+        },
+        "scope": {
+          "description": "Authority required for this operation. An application grant never grants organization work.",
+          "$ref": "#/$defs/AdminOperationScope"
         }
       },
       "additionalProperties": false,
@@ -384,6 +413,13 @@
         "id",
         "mode",
         "permission"
+      ]
+    },
+    "AdminOperationScope": {
+      "type": "string",
+      "enum": [
+        "application",
+        "organization"
       ]
     },
     "AdminPage": {
@@ -495,6 +531,16 @@
     "AdminSettings": {
       "type": "object",
       "properties": {
+        "groupLabels": {
+          "description": "Headings of the `group` keys the hints use.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
         "uiHints": {
           "description": "Presentation of the configuration form generated from\n`configurationSchema`, by top-level property.",
           "type": "object",
@@ -508,12 +554,43 @@
     "AdminUiHint": {
       "type": "object",
       "properties": {
+        "description": {
+          "description": "The field's help by locale, as `label` for the schema `description`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "fields": {
+          "description": "Hints of the properties of an object field, or of the items of an\narray of objects.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AdminUiHint"
+          }
+        },
         "group": {
           "description": "Group key the form puts the field under (`[a-z][a-z0-9_-]{0,31}`).",
           "type": [
             "string",
             "null"
           ]
+        },
+        "label": {
+          "description": "The field's name by locale. Takes the place of the schema `title`,\nwhich has one language; a locale it does not hold falls back to the\ntitle.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "options": {
+          "description": "Labels of the schema's enumerated values, by value and locale.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
         },
         "order": {
           "type": [
@@ -522,20 +599,43 @@
           ],
           "format": "int32"
         },
+        "reference": {
+          "description": "The options of the field, read with the viewer's own permission (see\n[`UiReference`]). `parents` name properties next to the field.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "widget": {
-          "$ref": "#/$defs/AdminHintWidget"
+          "description": "Absent: the form picks the control from the schema type.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdminHintWidget"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "widget"
-      ]
+      "additionalProperties": false
     },
     "AdminUninstall": {
       "type": "object",
       "properties": {
         "behavior": {
           "$ref": "#/$defs/UninstallBehavior"
+        },
+        "check": {
+          "description": "An admin `query` operation that reports what uninstalling would leave\nbehind: `{blockers: [..], warnings: [..]}`. Plugins holding user assets\nor long transactions declare it; the platform calls it first.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "export": {
           "description": "The plugin implements the data export protocol (`flare.plugin.data.v1`),\nso tenants can export before and for a while after uninstalling.",
@@ -659,12 +759,40 @@
       },
       "additionalProperties": false
     },
-    "HookFailureMode": {
-      "type": "string",
-      "enum": [
-        "deny",
-        "skip"
-      ]
+    "FeatureGates": {
+      "description": "What a closed [`PluginFeature`] takes away.",
+      "type": "object",
+      "properties": {
+        "configuration": {
+          "description": "A boolean top-level property of `configurationSchema` marked\nclient-visible. Its value follows the switch; the plugin enforces it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contributions": {
+          "description": "Ids of client contributions the catalog leaves out.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "operations": {
+          "description": "Wire ids of user operations and asynchronous Core event callbacks.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "serviceOperations": {
+          "description": "Wire ids of `user` mode service operations. `recovery` mode is never\ngated: closing a payment must not stop its reconciliation.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "HostCapability": {
       "oneOf": [
@@ -758,27 +886,31 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdminNavigation"
-          }
+          },
+          "maxItems": 64
         },
         "operations": {
           "description": "The admin operations, each a declared capability operation that no\nclient contribution uses.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdminOperation"
-          }
+          },
+          "maxItems": 96
         },
         "pages": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdminPage"
-          }
+          },
+          "maxItems": 64
         },
         "permissions": {
           "description": "Staff permissions of this plugin, granted as\n[`crate::invocation::plugin_permission`] codes\n(`plugin:<pluginId>:<id>`).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdminPermission"
-          }
+          },
+          "maxItems": 64
         },
         "settings": {
           "anyOf": [
@@ -812,6 +944,32 @@
       "required": [
         "digest",
         "signatureRef"
+      ]
+    },
+    "PluginAsset": {
+      "description": "One file of a package's `assets/`. The table is part of the signed\nmanifest, so changing a file fails verification.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "`sha256:<hex>` of the file.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Package path below `assets/`.",
+          "type": "string"
+        },
+        "size": {
+          "description": "File size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "digest",
+        "size"
       ]
     },
     "PluginDependency": {
@@ -854,17 +1012,17 @@
         "schema"
       ]
     },
-    "PluginHook": {
+    "PluginEventSubscription": {
       "type": "object",
       "properties": {
-        "apiVersion": {
+        "eventType": {
           "type": "string"
         },
-        "failureMode": {
-          "description": "A request to the host. The host owns the permitted hook failure policy.",
-          "$ref": "#/$defs/HookFailureMode"
+        "includeBody": {
+          "type": "boolean",
+          "default": false
         },
-        "id": {
+        "operation": {
           "type": "string"
         },
         "permissionIds": {
@@ -873,7 +1031,7 @@
             "type": "string"
           }
         },
-        "timeoutMs": {
+        "schemaVersion": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
@@ -881,11 +1039,58 @@
       },
       "additionalProperties": false,
       "required": [
-        "id",
-        "apiVersion",
-        "timeoutMs",
-        "failureMode",
+        "eventType",
+        "schemaVersion",
+        "operation",
         "permissionIds"
+      ]
+    },
+    "PluginFeature": {
+      "description": "One switch an application publishes on its own, with the global key\n`<pluginId>.<id>`. Operation, service operation and contribution gates are\nenforced by Core and never reach the plugin process. A configuration gate\nis for behaviour that shares one operation (a voice and a video call are\nthe same `start`): the plugin reads the key from its effective configuration.\n\nAn operation may belong to several features; closing any of them closes it.\nA feature the application has not published is closed.",
+      "type": "object",
+      "properties": {
+        "defaultEnabled": {
+          "description": "Whether the publishing flow preselects the feature. Not a runtime\ndefault: an unpublished feature stays closed.",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "What publishing or closing the feature changes, per locale.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "gates": {
+          "$ref": "#/$defs/FeatureGates"
+        },
+        "id": {
+          "description": "Unique in the manifest.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Display name per locale (`zh-CN`, `en-US`).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "requires": {
+          "description": "Global keys (`<pluginId>.<id>`) of features this one needs, of this\nplugin or a declared dependency. They order and explain publishing;\nCore never cascades a close.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel",
+          "default": "low"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "gates"
       ]
     },
     "PluginOperation": {
@@ -1834,6 +2039,9 @@
               "description": "Array of row objects; at most 100 are resolved.",
               "type": "string"
             },
+            "presentation": {
+              "$ref": "#/$defs/UiRowsPresentation"
+            },
             "source": {
               "description": "Wire operation declared by the plugin.",
               "type": "string"
@@ -1857,6 +2065,84 @@
             "path",
             "keyPath",
             "columns"
+          ]
+        },
+        {
+          "description": "Admin page (`admin.pages`) documents only.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "description": "Id of a document action with an operation target; the block owns it.",
+              "type": "string"
+            },
+            "emptyText": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hiddenWhen": {
+              "description": "Not shown when any condition (`0..=4`) matches the resolved data.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/UiCondition"
+              }
+            },
+            "idPath": {
+              "description": "Inside an item: its stable id (scalar); items without one are skipped.",
+              "type": "string"
+            },
+            "inputName": {
+              "description": "One of the action's `form` inputs.",
+              "type": "string"
+            },
+            "itemsPath": {
+              "description": "Array of item objects; at most 16 are resolved.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "protected-media"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "labelPath": {
+              "description": "Inside an item: what the viewer reads it as.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mediaTypePath": {
+              "description": "Inside an item: its media type (`image/jpeg`).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reasonInput": {
+              "description": "One of the action's `form` inputs. Together with `inputName` they are\nall of its form: the host collects nothing else.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "urlPath": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "itemsPath",
+            "idPath",
+            "action",
+            "inputName",
+            "urlPath"
           ]
         }
       ]
@@ -1886,6 +2172,17 @@
         "path": {
           "description": "Inside a row.",
           "type": "string"
+        },
+        "valueFormat": {
+          "description": "How the value reads, as for a field; its paths read the row. Takes the\nplace of `format` and `values`, which stay at their defaults.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiFieldFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "values": {
           "description": "Labels for enumerated cell values (`0..=32`), translated through `texts`.",
@@ -2034,6 +2331,9 @@
           "type": "integer",
           "format": "int32",
           "default": 1000
+        },
+        "preview": {
+          "description": "Sample data the marketplace renders this contribution with: an object\nof at most [`MAX_UI_PREVIEW_BYTES`]. Never read at run time; hosts\nleave it out of the client catalog."
         },
         "requiredPermissions": {
           "type": "array",
@@ -2265,6 +2565,17 @@
     "UiField": {
       "type": "object",
       "properties": {
+        "format": {
+          "description": "How the value reads. The resolved field keeps its plain text either way.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiFieldFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "label": {
           "type": "string"
         },
@@ -2285,6 +2596,164 @@
         "path"
       ]
     },
+    "UiFieldFormat": {
+      "description": "How a field or a column reads, tagged by `kind`. Paths read the object the\nfield reads: the resolved data for a field, the row for a column.",
+      "oneOf": [
+        {
+          "description": "An integer amount in minor units, as a number or a digit string. The scale\ncomes from `scale` or `scalePath`. Without either, or when the path holds\nno scale, the host looks the asset at `assetPath` up in what it already\nknows; until then the value stays the minor amount. At least one of the\nthree is set, and at most one of `scale` and `scalePath`.",
+          "type": "object",
+          "properties": {
+            "assetPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "money"
+            },
+            "scale": {
+              "description": "`0..=18`.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "scalePath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Labels of an enumerated value (`1..=64`, keys `1..=64` bytes), translated\nthrough `texts`. An unmapped value is shown as sent.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "enum"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "labels"
+          ]
+        },
+        {
+          "description": "A user id: the host shows the person. A staff actor is written\n[`STAFF_ACTOR_PREFIX`]`<id>`; the host gets the bare id.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "person"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An id shown through its label, read beside it at `labelPath`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "reference"
+            },
+            "labelPath": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "labelPath"
+          ]
+        },
+        {
+          "description": "Epoch milliseconds: the host formats the instant.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "time"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "UiFileInput": {
+      "type": "object",
+      "properties": {
+        "accept": {
+          "description": "Exact MIME types, without wildcards or parameters.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 5242880,
+          "minimum": 1
+        },
+        "upload": {
+          "$ref": "#/$defs/UiFileUpload"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "accept",
+        "maxBytes",
+        "upload"
+      ]
+    },
+    "UiFileUpload": {
+      "type": "object",
+      "properties": {
+        "completeOperation": {
+          "type": "string"
+        },
+        "prepareOperation": {
+          "type": "string"
+        },
+        "purpose": {
+          "description": "Plugin-owned purpose, pinned by the declaration, never by the form.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "prepareOperation",
+        "completeOperation",
+        "purpose"
+      ]
+    },
     "UiGroupRole": {
       "type": "string",
       "enum": [
@@ -2298,7 +2767,7 @@
       "type": "object",
       "properties": {
         "choices": {
-          "description": "select only: `1..=1024` choices.",
+          "description": "select: `1..=1024` choices. options: `0..=1024`; when present the items\nare picked from them instead of typed.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/UiInputChoice"
@@ -2319,6 +2788,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiFileInput"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "id": {
@@ -2367,9 +2846,31 @@
             "null"
           ]
         },
+        "reference": {
+          "description": "select and options only, instead of `choices`: the host reads the\nchoices with the viewer's own permission. Admin pages only. The value\nis checked for shape here; the plugin decides whether it exists.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "required": {
           "description": "A value is required: non-blank text, at least one item.",
           "type": "boolean"
+        },
+        "showWhen": {
+          "description": "Hosts seed visible defaults once. Every controller value change clears\nall dependants, including uploads still visible under the new value.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiInputShowWhen"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -2442,7 +2943,34 @@
           "description": "Conversation members picked from the list the host provides; value is\nan array of user ids, count within `min..=max`. `max: 1` is a single pick.",
           "type": "string",
           "const": "members"
+        },
+        {
+          "description": "One completed private plugin upload; value is exactly `{fileId}`.",
+          "type": "string",
+          "const": "file"
         }
+      ]
+    },
+    "UiInputShowWhen": {
+      "description": "Dynamic form visibility reads only an earlier unconditional Select of the\nsame collected form. Page data and arbitrary expressions are not involved.",
+      "type": "object",
+      "properties": {
+        "anyOf": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1
+        },
+        "field": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "anyOf"
       ]
     },
     "UiPageCommand": {
@@ -2469,11 +2997,20 @@
       ]
     },
     "UiPageCommandMode": {
-      "type": "string",
-      "enum": [
-        "submit",
-        "retry",
-        "acknowledge"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "submit",
+            "retry",
+            "acknowledge"
+          ]
+        },
+        {
+          "description": "Query the immutable authenticated intent; never replay its write.",
+          "type": "string",
+          "const": "observe"
+        }
       ]
     },
     "UiPageSource": {
@@ -2619,6 +3156,69 @@
       "additionalProperties": false,
       "required": [
         "renderer"
+      ]
+    },
+    "UiReference": {
+      "description": "Where a select input or a configuration field takes its options from: an\nadmin `query` operation of this plugin, or of `plugin`, one of its declared\ndependencies.\n\nEach read calls `operation` with `params`, the values of `parents`, the\nviewer's `search` text, `cursor` and `selected` (the value already chosen,\nso it can be named when it is not on the first page). The operation answers\n`{items: [..], nextCursor?, selected?}`; `valuePath` and `labelPath` read\ninside an item and inside `selected`.\n\nThe read runs under the viewer's own permission on the plugin that owns the\noperation. A viewer without it gets a disabled control: this plugin's\npermissions never read for them.",
+      "type": "object",
+      "properties": {
+        "labelPath": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "params": {
+          "description": "Fixed scalar inputs of the operation (`0..=8`).",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "parents": {
+          "description": "Operation inputs taken from sibling controls (`0..=4`), by operation\ninput name: the id of an input of the same document, or a property next\nto the configuration field. The control stays disabled until each holds\na value.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "plugin": {
+          "description": "The plugin that owns `operation`; this plugin when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "search": {
+          "description": "Operation input of the viewer's search text. Absent: no search box.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valuePath": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "valuePath",
+        "labelPath"
+      ]
+    },
+    "UiRowsPresentation": {
+      "description": "How a host draws a rows block. A host that cannot draw cards draws the table.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "table"
+          ]
+        },
+        {
+          "description": "One card per row: the first column is the title, the second the\ndescription, the others its details, the row actions its control.",
+          "type": "string",
+          "const": "cards"
+        }
       ]
     },
     "UiShowResults": {

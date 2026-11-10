@@ -5,6 +5,10 @@
   "version": "1.0.0",
   "apiVersion": "1.0",
   "displayName": "Example Notice Plugin",
+  "displayNameI18n": {
+    "zh-CN": "示例公告",
+    "en-US": "Example Notice"
+  },
   "description": "A sample tenant-scoped plugin manifest.",
   "publisher": {
     "publisherId": "example",
@@ -53,7 +57,19 @@
     }
   ],
   "events": [],
-  "hooks": [],
+  "features": [
+    {
+      "id": "publish",
+      "label": { "zh-CN": "发布公告", "en-US": "Publish notices" },
+      "description": {
+        "zh-CN": "关闭后不能发布新公告，已发布的公告不受影响",
+        "en-US": "When closed, no new notice can be published. Published notices stay."
+      },
+      "risk": "low",
+      "defaultEnabled": true,
+      "gates": { "operations": ["example.notice.publish"] }
+    }
+  ],
   "clientExtensions": {
     "platforms": ["web", "tauri", "android", "ios", "flutter", "harmonyos"],
     "contributions": []

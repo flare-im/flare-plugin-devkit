@@ -18,8 +18,7 @@ Provision a publisher-signed Manifest with `example.echo.say` and `example.echo.
 | `FLARE_PLUGIN_PUBLISHER_PUBLIC_KEY` | Base64 raw 32-byte public key |
 | `FLARE_PLUGIN_DEPLOYMENT_ID` | Operator-registered immutable deployment identity |
 | `FLARE_PLUGIN_GRPC_AUTHORITY` | Operator-registered shared service URL |
-| `FLARE_PLATFORM_PUBLIC_KEY` | Platform Ed25519 public key in PEM form |
-| `FLARE_PLUGIN_CALL_PUBLIC_KEYS` | JSON array of `{key_id, public_key_base64}`; independent invocation keys |
+| `FLARE_PLUGIN_CALL_PUBLIC_KEYS` | JSON array of `{key_id, public_key_base64}`; Core's invocation keys, which also verify the system ticket of `PluginRuntime.ApplyTenant` |
 | `FLARE_PLUGIN_RUNTIME_DATABASE_URL` | PostgreSQL state store shared by replicas of this deployment; distinct least-privilege role |
 | `FLARE_PLUGIN_RUNTIME_KEY_ID` | Optional, with the next one: key id of this deployment's runtime credential key |
 | `FLARE_PLUGIN_RUNTIME_SIGNING_KEY` | Optional: Base64 raw 32-byte Ed25519 seed for host writes with no call in flight; Core registers the public key for this deployment only in `FLARE_PLUGIN_RUNTIME_PUBLIC_KEYS` |
